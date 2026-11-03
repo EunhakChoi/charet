@@ -752,9 +752,15 @@ export function useProviderActions() {
         ),
       onSettled: settled,
     }),
-    signOut: useMutation({
+    /** Gives up the sign-in that waits (or dismisses a failed one); a signed-in account stays. */
+    cancelSignIn: useMutation({
       mutationFn: (id: ProviderId) =>
         unwrapEmpty(api.DELETE("/api/admin/agent/providers/{id}/oauth", provider(id))),
+      onSettled: settled,
+    }),
+    signOut: useMutation({
+      mutationFn: (id: ProviderId) =>
+        unwrapEmpty(api.POST("/api/admin/agent/providers/{id}/oauth/sign-out", provider(id))),
       onSettled: settled,
     }),
   };

@@ -1608,8 +1608,6 @@ pub struct FakeNet {
     refreshed_with: Mutex<Vec<String>>,
     /// Runs while an exchange is in flight (an admin acting meanwhile).
     during_exchange: Mutex<Option<Box<dyn Fn() + Send>>>,
-    /// Runs while a device sign-in is being started.
-    during_device_start: Mutex<Option<Box<dyn Fn() + Send>>>,
     /// Runs while a renewal is in flight.
     during_refresh: Mutex<Option<Box<dyn Fn() + Send>>>,
     /// Starting a device sign-in is refused with this message.
@@ -1669,18 +1667,14 @@ impl FakeNet {
         *self.during_exchange.lock().unwrap() = Some(Box::new(act));
     }
 
-    /// `act` runs while the next `ChatGPT` sign-in is being started, as if an admin did it just then.
-    pub fn during_device_start(&self, act: impl Fn() + Send + 'static) {
-        *self.during_device_start.lock().unwrap() = Some(Box::new(act));
-    }
-
     /// `act` runs while the next renewal is in flight, as if an admin did it just then.
     pub fn during_refresh(&self, act: impl Fn() + Send + 'static) {
         *self.during_refresh.lock().unwrap() = Some(Box::new(act));
     }
 
     fn exchange_in_flight(&self) {
-        if let Some(act) = self.during_exchange.lock().unwrap().take() {
+        let during = self.during_exchange.lock().unwrap().take();
+        if let Some(act) = during {
             act();
         }
     }
@@ -1692,6 +1686,11 @@ impl FakeNet {
     /// How many times the provider was asked whether the device sign-in was done.
     pub fn polls(&self) -> u32 {
         *self.polls.lock().unwrap()
+    }
+
+    /// How many device sign-ins the provider was asked to start.
+    pub fn device_starts(&self) -> u32 {
+        *self.device_starts.lock().unwrap()
     }
 
     pub fn refreshes(&self) -> u32 {
@@ -1747,10 +1746,6 @@ impl crate::ProviderNet for FakeNet {
             *starts += 1;
             *starts
         };
-        let during = self.during_device_start.lock().unwrap().take();
-        if let Some(act) = during {
-            act();
-        }
         Ok(crate::DeviceAuth {
             device_auth_id: format!("dev-{number}"),
             user_code: format!("ABCD-{}", 1233 + number),
@@ -1846,6 +1841,10 @@ impl crate::ProviderNet for FakeNet {
         _refresh_token: &str,
     ) -> Result<crate::Tokens, crate::ProviderError> {
         *self.refreshes.lock().unwrap() += 1;
+        let during = self.during_refresh.lock().unwrap().take();
+        if let Some(act) = during {
+            act();
+        }
         if let Some(message) = self.refresh_refused.lock().unwrap().clone() {
             return Err(crate::ProviderError::Rejected(message));
         }

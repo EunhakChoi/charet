@@ -28,13 +28,15 @@ docker compose -f compose.yaml -f compose.agent.yaml up -d --build
   - ChatGPT: page 에 표시된 code 를 provider page 에 입력. 완료는 charet 이 알아서 감지.
   - Claude: 로그인 후 provider page 에 표시된 code 를 charet 에 붙여넣기.
   - 로그인 정보는 암호화해 보관. Run 시작 전에 갱신하고, run container 에는 수명이 짧은 access token 만 전달. Refresh token 은 server 밖으로 나가지 않음.
+  - Provider 당 계정 1개 (모든 팀원의 web agent 공용). Sign-in 은 한 번에 1개.
+    - **취소**: 진행 중인 sign-in 만 끝냄. 로그인된 계정은 그대로.
+    - **다른 계정으로 로그인**: 새 sign-in 이 성공하면 계정 교체. 실패하면 기존 계정 유지.
+    - **로그아웃**: 저장된 로그인 삭제. Provider 쪽 token 은 철회하지 않음.
 - 둘 다 설정하면 agent 가 쓸 쪽을 선택.
 - `compose.yaml` 옆 `.env`: `CHARET_ANTHROPIC_API_KEY=…` (Claude) · `CHARET_OPENAI_API_KEY=…` (Codex) · `CHARET_GOOGLE_API_KEY=…` (추후용, 아직 Google 로 실행되는 agent 없음).
   Page 입력보다 우선, page 에서 변경 불가.
 
 같은 page 에서 기본 agent 와 agent 별 model 설정 (빈 값 = agent 기본 model).
-
-구독 로그인은 provider 자체 command line tool 의 로그인 방식을 사용함. 개인 설치 또는 소규모 신뢰 팀용. 팀 작업을 한 사람의 구독에 올리기 전에 provider 약관 확인 필요.
 
 ## 요청하기
 

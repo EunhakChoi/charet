@@ -1294,10 +1294,39 @@ export interface paths {
         /** Where the sign-in stands. The page polls it while the sign-in window is open (admins). */
         get: operations["getProviderSignIn"];
         put?: never;
-        /** Starts a sign-in; the page opens the returned address in a new window (admins) */
+        /**
+         * Starts a sign-in; the page opens the returned address in a new window. One at a time per
+         *     provider. An account that is signed in stays in use until the new sign-in succeeds, which
+         *     replaces it (admins)
+         */
         post: operations["startProviderSignIn"];
-        /** Cancels a sign-in that is waiting, or signs the account out (admins) */
-        delete: operations["endProviderSignIn"];
+        /**
+         * Cancels the sign-in that is waiting, or dismisses a failed one. Nothing else changes: an
+         *     account that is signed in stays so (admins)
+         */
+        delete: operations["cancelProviderSignIn"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/agent/providers/{id}/oauth/sign-out": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Signs the account out: the saved login is forgotten here (the provider is not told). A
+         *     sign-in that is waiting is left as it is (admins)
+         */
+        post: operations["signOutProvider"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2042,9 +2071,12 @@ export interface components {
             url?: string;
             /** @description The code to type at `url` (method `device`) */
             userCode?: string;
-            /** @description Who is signed in (an email), when known */
+            /** @description Who is signed in (an email), when known. Kept while a new sign-in waits */
             account?: string;
-            /** @description Why the last sign-in failed */
+            /**
+             * @description Why the last sign-in failed. While an account is signed in, `state` stays `signed_in`
+             *     and this tells the failure; with nobody signed in, `state` is `failed`
+             */
             error?: string;
         };
         StartAgentRun: {
@@ -4462,10 +4494,19 @@ export interface operations {
             };
             400: components["responses"]["Invalid"];
             403: components["responses"]["Forbidden"];
+            /** @description A sign-in is already waiting for this provider; cancel it first */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             503: components["responses"]["Unavailable"];
         };
     };
-    endProviderSignIn: {
+    cancelProviderSignIn: {
         parameters: {
             query?: never;
             header?: never;
@@ -4476,7 +4517,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Signed out */
+            /** @description Cancelled (also when no sign-in was waiting) */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -4484,6 +4525,28 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["Forbidden"];
+        };
+    };
+    signOutProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Signed out (also when nobody was signed in) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     finishProviderSignIn: {

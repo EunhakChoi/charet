@@ -1,6 +1,7 @@
-// Web agent accounts: a sign-in under way keeps its code when its page is opened again, and
-// cancelling it leaves the provider signed out. Claude's sign-in starts without any call to the
-// provider (its page shows the code), so this runs against the real stack without a network.
+// Web agent accounts: a sign-in under way keeps its code when its page is opened again, there is
+// only one at a time per provider, and cancelling it leaves the provider signed out. Claude's
+// sign-in starts without any call to the provider (its page shows the code), so this runs against
+// the real stack without a network.
 
 import { expect, test } from "@playwright/test";
 import { asOwner } from "./people.ts";
@@ -47,6 +48,13 @@ test("opening a waiting sign-in again shows the same page; cancelling ends it", 
   await expect(claude.getByRole("alert")).toContainText("another sign-in");
   await expect(claude.getByRole("button", { name: "Finish sign-in" })).toBeVisible();
 
+  // One sign-in at a time: a second start is refused while this one waits.
+  const second = await page.request.post(`${base()}/api/admin/agent/providers/anthropic/oauth`);
+  expect(second.status()).toBe(409);
+
+  // Cancelling ends only the sign-in; nobody was signed in, so nobody is now.
   await claude.getByRole("button", { name: "Cancel" }).click();
   await expect(claude.getByRole("button", { name: "Sign in with Anthropic" })).toBeVisible();
+  const after = await page.request.get(`${base()}/api/admin/agent/providers/anthropic/oauth`);
+  expect(((await after.json()) as { state: string }).state).toBe("signed_out");
 });

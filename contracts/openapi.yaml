@@ -2022,7 +2022,10 @@ paths:
     post:
       tags: [agent]
       operationId: startProviderSignIn
-      summary: Starts a sign-in; the page opens the returned address in a new window (admins)
+      summary: |
+        Starts a sign-in; the page opens the returned address in a new window. One at a time per
+        provider. An account that is signed in stays in use until the new sign-in succeeds, which
+        replaces it (admins)
       responses:
         "200":
           description: Waiting for the person to finish in the new window
@@ -2034,17 +2037,41 @@ paths:
           $ref: "#/components/responses/Invalid"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "409":
+          description: A sign-in is already waiting for this provider; cancel it first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "503":
           $ref: "#/components/responses/Unavailable"
     delete:
       tags: [agent]
-      operationId: endProviderSignIn
-      summary: Cancels a sign-in that is waiting, or signs the account out (admins)
+      operationId: cancelProviderSignIn
+      summary: |
+        Cancels the sign-in that is waiting, or dismisses a failed one. Nothing else changes: an
+        account that is signed in stays so (admins)
       responses:
         "204":
-          description: Signed out
+          description: Cancelled (also when no sign-in was waiting)
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/admin/agent/providers/{id}/oauth/sign-out:
+    parameters:
+      - $ref: "#/components/parameters/ProviderId"
+    post:
+      tags: [agent]
+      operationId: signOutProvider
+      summary: |
+        Signs the account out: the saved login is forgotten here (the provider is not told). A
+        sign-in that is waiting is left as it is (admins)
+      responses:
+        "204":
+          description: Signed out (also when nobody was signed in)
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/admin/agent/providers/{id}/oauth/code:
     parameters:
       - $ref: "#/components/parameters/ProviderId"
@@ -3513,10 +3540,12 @@ components:
           description: The code to type at `url` (method `device`)
         account:
           type: string
-          description: Who is signed in (an email), when known
+          description: Who is signed in (an email), when known. Kept while a new sign-in waits
         error:
           type: string
-          description: Why the last sign-in failed
+          description: |
+            Why the last sign-in failed. While an account is signed in, `state` stays `signed_in`
+            and this tells the failure; with nobody signed in, `state` is `failed`
     StartAgentRun:
       type: object
       required: [prompt]

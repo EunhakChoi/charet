@@ -30,16 +30,16 @@ OpenAI for Codex) use an API key, a subscription sign-in, or both:
   - Claude: after signing in, the provider's page shows a code; paste it back into charet.
   - charet keeps the login encrypted, renews it before each run, and hands the run's container only
     the short-lived access token. The refresh token never leaves the server.
+  - One account per provider, shared by everyone's web agent. One sign-in at a time: **Cancel**
+    ends the one that waits and nothing else. **Sign in with another account** replaces the
+    account when the new sign-in succeeds (a failed one leaves it). **Sign out** forgets the
+    login here; the provider is not told.
 - With both set, pick which one the agent uses.
 - `.env` next to `compose.yaml`: `CHARET_ANTHROPIC_API_KEY=…` (Claude), `CHARET_OPENAI_API_KEY=…`
   (Codex), `CHARET_GOOGLE_API_KEY=…` (kept for later; nothing runs on Google yet). These win over
   the page and cannot be changed there.
 
 The same page sets the default agent and a model per agent (empty is the agent's own default).
-
-A subscription sign-in uses the sign-in flows of the providers' own command line tools. It is meant
-for a personal install or a small trusted team: check your provider's terms before putting a
-shared team's work on one person's subscription.
 
 ## Asking
 

@@ -165,6 +165,13 @@ async fn post(engine: Engine, path: &str, body: &Value) -> (StatusCode, Value) {
     (status, serde_json::from_slice(&bytes).unwrap())
 }
 
+/// A `POST` with no body that answers with none (`204`), or with an error body.
+async fn post_empty(engine: Engine, path: &str) -> StatusCode {
+    send(engine, Request::post(path).body(Body::empty()).unwrap())
+        .await
+        .0
+}
+
 fn b64(text: &str) -> String {
     STANDARD.encode(text)
 }
@@ -1940,12 +1947,25 @@ async fn admins_sign_in_to_providers() {
         ),
         (Some("waiting"), Some("device"), Some("WXYZ-0001"))
     );
+    // One sign-in at a time per provider.
+    let (status, again) = post(engine.clone(), &format!("{base}/openai/oauth"), &json!({})).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{again}");
+    assert_eq!(again["code"], "exists");
     assert_eq!(
         delete(engine.clone(), &format!("{base}/openai/oauth")).await,
         StatusCode::NO_CONTENT
     );
     let (_, now) = call(engine.clone(), &format!("{base}/openai/oauth")).await;
     assert_eq!(now["state"], "signed_out");
+    // Signing out is its own call (and changes nothing when nobody is signed in).
+    assert_eq!(
+        post_empty(engine.clone(), &format!("{base}/openai/oauth/sign-out")).await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        post_empty(engine.clone(), &format!("{base}/nope/oauth/sign-out")).await,
+        StatusCode::NOT_FOUND
+    );
     let (status, _) = post(engine.clone(), &format!("{base}/google/oauth"), &json!({})).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let (status, _) = post(

@@ -22,7 +22,13 @@ pub fn routes() -> Router<Engine> {
         .route("/api/admin/agent/providers/{id}/use", put(choose))
         .route(
             "/api/admin/agent/providers/{id}/oauth",
-            get(sign_in_status).post(start_sign_in).delete(end_sign_in),
+            get(sign_in_status)
+                .post(start_sign_in)
+                .delete(cancel_sign_in),
+        )
+        .route(
+            "/api/admin/agent/providers/{id}/oauth/sign-out",
+            post(sign_out),
         )
         .route(
             "/api/admin/agent/providers/{id}/oauth/code",
@@ -143,13 +149,24 @@ async fn start_sign_in(
 }
 
 /// `DELETE /api/admin/agent/providers/{id}/oauth`
-async fn end_sign_in(
+async fn cancel_sign_in(
     State(engine): State<Engine>,
     Caller(actor): Caller,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let id = provider(&id)?;
-    blocking(move || engine.end_provider_sign_in(&actor, id)).await?;
+    blocking(move || engine.cancel_provider_sign_in(&actor, id)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /api/admin/agent/providers/{id}/oauth/sign-out`
+async fn sign_out(
+    State(engine): State<Engine>,
+    Caller(actor): Caller,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let id = provider(&id)?;
+    blocking(move || engine.sign_out_provider(&actor, id)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

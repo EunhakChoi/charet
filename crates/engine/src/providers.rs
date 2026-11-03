@@ -12,8 +12,7 @@
 //! - Network calls go through [`ProviderNet`]; this module decides, stores and refreshes.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -313,72 +312,87 @@ enum Pending {
         device: DeviceAuth,
         started: u64,
         next_poll: u64,
-        generation: u64,
-        /// The code has been given and is being exchanged for tokens: nothing else asks the
-        /// provider about this attempt until that is done (the code is used up by the exchange).
-        exchanging: bool,
     },
     Code {
         verifier: String,
         started: u64,
-        generation: u64,
     },
     Failed(String),
 }
 
 impl Pending {
-    /// Which attempt this is (the provider's device id, or the PKCE verifier) and the generation
-    /// it stands under. The identity never changes; the generation is re-stamped when a restart
-    /// that would have replaced the attempt fails.
-    fn attempt(&self) -> Option<(&str, u64)> {
+    /// Started more than [`LOGIN_TIMEOUT`] ago and not finished.
+    fn timed_out(&self, at: u64) -> bool {
         match self {
-            Self::Device {
-                device, generation, ..
-            } => Some((&device.device_auth_id, *generation)),
-            Self::Code {
-                verifier,
-                generation,
-                ..
-            } => Some((verifier, *generation)),
-            Self::Failed(_) => None,
+            Self::Device { started, .. } | Self::Code { started, .. } => {
+                at > started + LOGIN_TIMEOUT
+            }
+            Self::Failed(_) => false,
         }
+    }
+
+    /// Whether the person can still finish it.
+    fn is_open(&self, at: u64) -> bool {
+        !matches!(self, Self::Failed(_)) && !self.timed_out(at)
     }
 }
 
-/// Whether `attempt` is the one pending for `provider`, whatever was asked for since.
-fn holds(pending: &HashMap<ProviderId, Pending>, provider: ProviderId, attempt: &str) -> bool {
-    pending
-        .get(&provider)
-        .and_then(Pending::attempt)
-        .is_some_and(|(id, _)| id == attempt)
+/// One provider's sign-in and saved login. Whatever changes either (a start, a look at the
+/// provider, a code exchange, a renewal, a sign-out) happens with [`Account::hold`] taken, network
+/// calls included: two of them never overlap, so none acts on what another has just replaced.
+/// Status looks never wait for it.
+#[derive(Default)]
+struct Account {
+    busy: Mutex<()>,
+    /// The sign-in under way. Written only while `busy` is held; anyone may read it.
+    pending: Mutex<Option<Pending>>,
 }
 
-/// The network port and what is in flight.
+impl Account {
+    fn hold(&self) -> MutexGuard<'_, ()> {
+        self.busy.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// `None` when something else holds it right now.
+    fn try_hold(&self) -> Option<MutexGuard<'_, ()>> {
+        match self.busy.try_lock() {
+            Ok(guard) => Some(guard),
+            Err(TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
+            Err(TryLockError::WouldBlock) => None,
+        }
+    }
+
+    fn pending(&self) -> MutexGuard<'_, Option<Pending>> {
+        self.pending.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// The network port and the accounts.
 #[derive(Clone)]
 pub(crate) struct Providers {
     net: Arc<dyn ProviderNet>,
-    pending: Arc<Mutex<HashMap<ProviderId, Pending>>>,
-    /// Renewing a login replaces its refresh token: one at a time.
-    renewing: Arc<Mutex<()>>,
-    /// The newest sign-in action (a start or a cancel) asked for, per provider. It is noted before
-    /// the action waits for anything, so an attempt that finishes meanwhile is already out of date.
-    latest: Arc<Mutex<HashMap<ProviderId, u64>>>,
-    next_generation: Arc<AtomicU64>,
+    accounts: Arc<HashMap<ProviderId, Account>>,
 }
 
 impl Providers {
     pub(crate) fn new(net: Arc<dyn ProviderNet>) -> Self {
         Self {
             net,
-            pending: Arc::default(),
-            renewing: Arc::default(),
-            latest: Arc::default(),
-            next_generation: Arc::default(),
+            accounts: Arc::new(
+                ProviderId::ALL
+                    .into_iter()
+                    .map(|provider| (provider, Account::default()))
+                    .collect(),
+            ),
         }
     }
 
+    fn account(&self, provider: ProviderId) -> &Account {
+        &self.accounts[&provider]
+    }
+
     /// What a sign-in of `provider` waits for, asked from the provider.
-    fn new_attempt(&self, provider: ProviderId, generation: u64) -> Result<Pending, EngineError> {
+    fn new_attempt(&self, provider: ProviderId) -> Result<Pending, EngineError> {
         let started = now();
         match provider {
             ProviderId::Openai => {
@@ -387,75 +401,14 @@ impl Providers {
                     next_poll: started + device.interval_secs.max(1),
                     device,
                     started,
-                    generation,
-                    exchanging: false,
                 })
             }
             ProviderId::Anthropic => Ok(Pending::Code {
                 verifier: random_verifier()?,
                 started,
-                generation,
             }),
             ProviderId::Google => Err(EngineError::Invalid("this provider has no sign-in".into())),
         }
-    }
-
-    /// Notes that a start or cancel was asked for: attempts of an earlier generation are not wanted
-    /// from now on, even while this action still waits for the pending state.
-    fn reserve(&self, provider: ProviderId) -> u64 {
-        let generation = self.next_generation.fetch_add(1, Ordering::SeqCst) + 1;
-        self.latest
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(provider, generation);
-        generation
-    }
-
-    /// A start of this `generation` failed. If it is still the newest action, the attempt that was
-    /// waiting (if any) is the one that counts again, as if the start had never been asked for.
-    fn keep_waiting_attempt(&self, provider: ProviderId, generation: u64) {
-        let mut pending = self.pending();
-        if !self.is_latest(provider, generation) {
-            return;
-        }
-        if let Some(Pending::Device { generation: g, .. } | Pending::Code { generation: g, .. }) =
-            pending.get_mut(&provider)
-        {
-            *g = generation;
-        }
-    }
-
-    /// Whether `attempt` is still the one pending and stands under the newest start or cancel
-    /// asked for. (Its identity is what a finishing request carries: a failed restart re-stamps the
-    /// generation of the attempt it would have replaced, and that attempt must still be accepted.)
-    fn wanted(
-        &self,
-        pending: &HashMap<ProviderId, Pending>,
-        provider: ProviderId,
-        attempt: &str,
-    ) -> bool {
-        pending
-            .get(&provider)
-            .and_then(Pending::attempt)
-            .is_some_and(|(id, generation)| id == attempt && self.is_latest(provider, generation))
-    }
-
-    /// Whether no start or cancel newer than this `generation` was asked for.
-    fn is_latest(&self, provider: ProviderId, generation: u64) -> bool {
-        self.latest
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&provider)
-            == Some(&generation)
-    }
-
-    /// The pending sign-ins. Lock order: `pending`, then `latest` (never the other way round).
-    /// A decision about an attempt and its effect (storing a login) happen under this one lock, so
-    /// that they cannot be separated by a start or a cancel.
-    fn pending(&self) -> std::sync::MutexGuard<'_, HashMap<ProviderId, Pending>> {
-        self.pending
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -537,7 +490,9 @@ impl Engine {
         self.provider_view(&config, provider)
     }
 
-    /// Starts a sign-in: where to go, and what to type or paste there. Admins only.
+    /// Starts a sign-in: where to go, and what to type or paste there. One at a time per provider:
+    /// while one waits it has to be cancelled first. An account that is signed in stays so until the
+    /// new sign-in succeeds (which then replaces it). Admins only.
     pub fn start_provider_sign_in(
         &self,
         actor: &Actor,
@@ -545,23 +500,17 @@ impl Engine {
     ) -> Result<OAuthStatus, EngineError> {
         admin_only(actor)?;
         let providers = self.provider_net()?;
-        // Noted before the provider is asked anything, so an attempt that finishes meanwhile is not
-        // accepted under the new one.
-        let generation = providers.reserve(provider);
-        let pending = providers
-            .new_attempt(provider, generation)
-            .inspect_err(|_| providers.keep_waiting_attempt(provider, generation))?;
+        let account = providers.account(provider);
+        let _busy = account.hold();
+        if account
+            .pending()
+            .as_ref()
+            .is_some_and(|pending| pending.is_open(now()))
         {
-            let mut state = providers.pending();
-            // A newer start or a cancel was asked for while the provider answered: this attempt
-            // must not overwrite what they made (or bring back what a cancel removed).
-            if !providers.is_latest(provider, generation) {
-                return Err(EngineError::Invalid(
-                    "the sign-in was cancelled or restarted while it started; try again".into(),
-                ));
-            }
-            state.insert(provider, pending);
+            return Err(EngineError::Exists("a sign-in for this provider"));
         }
+        let attempt = providers.new_attempt(provider)?;
+        *account.pending() = Some(attempt);
         self.sign_in_view(provider)
     }
 
@@ -589,8 +538,12 @@ impl Engine {
     ) -> Result<OAuthStatus, EngineError> {
         admin_only(actor)?;
         let providers = self.provider_net()?;
-        let verifier = match providers.pending().get(&provider) {
-            Some(Pending::Code { verifier, .. }) => verifier.clone(),
+        let account = providers.account(provider);
+        let _busy = account.hold();
+        let verifier = match account.pending().as_ref() {
+            Some(pending @ Pending::Code { verifier, .. }) if pending.is_open(now()) => {
+                verifier.clone()
+            }
             _ => {
                 return Err(EngineError::Invalid(
                     "no sign-in is waiting for a code; start one first".into(),
@@ -622,42 +575,41 @@ impl Engine {
                 )),
                 ProviderError::Unavailable(message) => EngineError::Unavailable(message),
             })?;
-        {
-            let mut pending = providers.pending();
-            // Cancelled or restarted while the code was exchanged: this login is not wanted now.
-            if !providers.wanted(&pending, provider, &verifier) {
-                return Err(EngineError::Invalid(
-                    "that sign-in was cancelled or restarted; start again".into(),
-                ));
-            }
-            self.store_login(provider, &tokens, None)?;
-            pending.remove(&provider);
-        }
+        self.store_login(provider, &tokens, None)?;
+        *account.pending() = None;
         self.sign_in_view(provider)
     }
 
-    /// Cancels a sign-in that waits (or dismisses one that failed); with none under way, signs the
-    /// account out. Admins only.
-    pub fn end_provider_sign_in(
+    /// Cancels the sign-in that waits (or dismisses one that failed). Nothing else changes: an
+    /// account that is signed in stays so, and a sign-in that has already finished is not undone.
+    /// Admins only.
+    pub fn cancel_provider_sign_in(
         &self,
         actor: &Actor,
         provider: ProviderId,
     ) -> Result<(), EngineError> {
         admin_only(actor)?;
         if let Some(providers) = &self.providers {
-            // Noted first: an attempt finishing at this very moment is not accepted behind it.
-            providers.reserve(provider);
-            if providers.pending().remove(&provider).is_some() {
-                return Ok(());
-            }
+            let account = providers.account(provider);
+            let _busy = account.hold();
+            *account.pending() = None;
         }
+        Ok(())
+    }
+
+    /// Signs the account out: the saved login is forgotten here (the provider is not told). A
+    /// sign-in that waits is left as it is. Admins only.
+    pub fn sign_out_provider(
+        &self,
+        actor: &Actor,
+        provider: ProviderId,
+    ) -> Result<(), EngineError> {
+        admin_only(actor)?;
         // A renewal in flight would store its tokens after this and bring the login back.
-        let _renewal_done = self.providers.as_ref().map(|providers| {
-            providers
-                .renewing
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-        });
+        let _busy = self
+            .providers
+            .as_ref()
+            .map(|providers| providers.account(provider).hold());
         self.ports.settings.set(&provider.login_setting(), "")?;
         self.ports.settings.set(&provider.use_setting(), "")?;
         Ok(())
@@ -784,11 +736,12 @@ impl Engine {
         })
     }
 
+    /// Where the sign-in stands. A saved login shows through a new sign-in: `account` is kept, and a
+    /// failed attempt is an `error` on a state that stays `SignedIn` (the account is still in use).
     fn sign_in_view(&self, provider: ProviderId) -> Result<OAuthStatus, EngineError> {
-        if let Some(providers) = &self.providers
-            && let Some(pending) = providers.pending().get(&provider)
-        {
-            return Ok(match pending {
+        let login = self.stored_login(provider)?;
+        let attempt = self.providers.as_ref().and_then(|providers| {
+            Some(match providers.account(provider).pending().as_ref()? {
                 Pending::Device { device, .. } => OAuthStatus {
                     method: Some(SignInMethod::Device),
                     url: Some(OPENAI_DEVICE_URL.into()),
@@ -804,123 +757,81 @@ impl Engine {
                     error: Some(error.clone()),
                     ..OAuthStatus::only(SignInState::Failed)
                 },
-            });
-        }
-        Ok(match self.stored_login(provider)? {
-            Some(login) => OAuthStatus {
-                account: (!login.account.is_empty()).then_some(login.account),
+            })
+        });
+        let Some(login) = login else {
+            return Ok(attempt.unwrap_or_else(|| OAuthStatus::only(SignInState::SignedOut)));
+        };
+        let account = (!login.account.is_empty()).then_some(login.account);
+        Ok(match attempt {
+            Some(waiting) if waiting.state == SignInState::Waiting => {
+                OAuthStatus { account, ..waiting }
+            }
+            failed => OAuthStatus {
+                account,
+                error: failed.and_then(|f| f.error),
                 ..OAuthStatus::only(SignInState::SignedIn)
             },
-            None => OAuthStatus::only(SignInState::SignedOut),
         })
     }
 
     /// One step of a waiting sign-in: a device sign-in asks the provider (at most as often as it
-    /// allows); one that waited too long is given up.
+    /// allows); one that waited too long is given up. A look that finds the account busy (another
+    /// look, a code exchange, a renewal) leaves the step to that one: status never waits.
     fn advance_sign_in(&self, provider: ProviderId) {
         let Some(providers) = &self.providers else {
             return;
         };
+        let account = providers.account(provider);
+        let Some(_busy) = account.try_hold() else {
+            return;
+        };
+        let at = now();
         let device = {
-            let mut pending = providers.pending();
-            let at = now();
-            let too_long = match pending.get(&provider) {
-                Some(Pending::Device {
-                    exchanging: true, ..
-                }) => return,
-                Some(Pending::Device { started, .. } | Pending::Code { started, .. }) => {
-                    at > started + LOGIN_TIMEOUT
-                }
-                _ => return,
-            };
-            if too_long {
-                pending.insert(
-                    provider,
-                    Pending::Failed("the sign-in took too long; start again".into()),
-                );
+            let mut pending = account.pending();
+            if pending.as_ref().is_some_and(|p| p.timed_out(at)) {
+                *pending = Some(Pending::Failed(
+                    "the sign-in took too long; start again".into(),
+                ));
                 return;
             }
-            match pending.get_mut(&provider) {
+            match pending.as_mut() {
                 Some(Pending::Device {
-                    device,
-                    next_poll,
-                    exchanging: false,
-                    ..
+                    device, next_poll, ..
                 }) if at >= *next_poll => {
-                    // Claim this look: a second page asking meanwhile waits for the next one.
                     *next_poll = at + device.interval_secs.max(1);
                     device.clone()
                 }
                 _ => return,
             }
         };
-        let outcome = providers.net.openai_device_poll(&device);
-        let mut pending = providers.pending();
-        // Cancelled or restarted while the provider was asked: leave the newer state alone.
-        if !providers.wanted(&pending, provider, &device.device_auth_id) {
-            return;
-        }
-        // Another look already got the code and is exchanging it: its outcome is the one that counts.
-        if matches!(
-            pending.get(&provider),
-            Some(Pending::Device {
-                exchanging: true,
-                ..
-            })
-        ) {
-            return;
-        }
-        match outcome {
+        match providers.net.openai_device_poll(&device) {
             // Not yet, or the provider could not be asked this time: the next look tries again.
             Ok(DevicePoll::Pending) | Err(ProviderError::Unavailable(_)) => {}
             Ok(DevicePoll::SlowDown) => {
                 if let Some(Pending::Device {
                     device, next_poll, ..
-                }) = pending.get_mut(&provider)
+                }) = account.pending().as_mut()
                 {
                     device.interval_secs += 5;
                     *next_poll = now() + device.interval_secs;
                 }
             }
             Ok(DevicePoll::Failed(message)) | Err(ProviderError::Rejected(message)) => {
-                pending.insert(provider, Pending::Failed(message));
+                *account.pending() = Some(Pending::Failed(message));
             }
             Ok(DevicePoll::Done {
                 authorization_code,
                 code_verifier,
             }) => {
-                if let Some(Pending::Device { exchanging, .. }) = pending.get_mut(&provider) {
-                    *exchanging = true;
-                }
-                drop(pending);
-                let exchanged = providers
+                let signed_in = providers
                     .net
                     .openai_exchange(&authorization_code, &code_verifier, OPENAI_DEVICE_REDIRECT)
-                    .map_err(sign_in_error);
-                let mut pending = providers.pending();
-                // Cancelled or restarted while the code was exchanged: this login is not wanted now.
-                if !providers.wanted(&pending, provider, &device.device_auth_id) {
-                    // The exchange used the code up, so an attempt still here (a newer start or a
-                    // cancel is on its way) can never finish: say so instead of waiting forever.
-                    if holds(&pending, provider, &device.device_auth_id) {
-                        pending.insert(
-                            provider,
-                            Pending::Failed(
-                                "the sign-in was cancelled or restarted while it finished; start again"
-                                    .into(),
-                            ),
-                        );
-                    }
-                    return;
-                }
-                match exchanged.and_then(|tokens| self.store_login(provider, &tokens, None)) {
-                    Ok(()) => {
-                        pending.remove(&provider);
-                    }
-                    Err(error) => {
-                        pending.insert(provider, Pending::Failed(error_text(&error)));
-                    }
-                }
+                    .map_err(sign_in_error)
+                    .and_then(|tokens| self.store_login(provider, &tokens, None));
+                *account.pending() = signed_in
+                    .err()
+                    .map(|error| Pending::Failed(error_text(&error)));
             }
         }
     }
@@ -1004,11 +915,8 @@ impl Engine {
             return Ok(Some(login));
         }
         let providers = self.provider_net()?;
-        let _one_at_a_time = providers
-            .renewing
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        // Someone else may have renewed it while this waited.
+        let _busy = providers.account(provider).hold();
+        // Someone else may have renewed it, or signed in again, while this waited.
         let Some(login) = self.stored_login(provider)? else {
             return Ok(None);
         };
@@ -1204,10 +1112,48 @@ mod tests {
 
     /// Lets the next look at a waiting device sign-in ask the provider now.
     fn expire_poll_wait(engine: &Engine, provider: ProviderId) {
-        let mut pending = engine.providers.as_ref().unwrap().pending();
-        if let Some(Pending::Device { next_poll, .. }) = pending.get_mut(&provider) {
+        let account = engine.providers.as_ref().unwrap().account(provider);
+        if let Some(Pending::Device { next_poll, .. }) = account.pending().as_mut() {
             *next_poll = 0;
         }
+    }
+
+    /// Makes the waiting sign-in as old as one nobody finished for too long.
+    fn age_attempt(engine: &Engine, provider: ProviderId) {
+        let account = engine.providers.as_ref().unwrap().account(provider);
+        if let Some(Pending::Device { started, .. } | Pending::Code { started, .. }) =
+            account.pending().as_mut()
+        {
+            *started = now() - LOGIN_TIMEOUT - 1;
+        }
+    }
+
+    /// Signs in to `ChatGPT` as `account` (the person finishes the device sign-in).
+    fn sign_in_chatgpt(engine: &Engine, fakes: &Fakes, admin: &Actor, account: &str) {
+        engine
+            .start_provider_sign_in(admin, ProviderId::Openai)
+            .unwrap();
+        fakes.net.finish_device(&chatgpt_token(account));
+        expire_poll_wait(engine, ProviderId::Openai);
+        let state = engine.provider_sign_in(admin, ProviderId::Openai).unwrap();
+        assert_eq!(state.state, SignInState::SignedIn);
+    }
+
+    /// Signs in to Claude with a pasted code; `Fakes` hand out the same login each time.
+    fn sign_in_claude(engine: &Engine, admin: &Actor) {
+        let url = engine
+            .start_provider_sign_in(admin, ProviderId::Anthropic)
+            .unwrap()
+            .url
+            .unwrap();
+        let verifier = url.split("state=").nth(1).unwrap().to_owned();
+        engine
+            .finish_provider_sign_in(admin, ProviderId::Anthropic, &format!("code#{verifier}"))
+            .unwrap();
+    }
+
+    fn state_of(engine: &Engine, admin: &Actor, provider: ProviderId) -> SignInState {
+        engine.provider_sign_in(admin, provider).unwrap().state
     }
 
     /// Leaves the saved login `left` seconds to live.
@@ -1355,7 +1301,7 @@ mod tests {
             .start_provider_sign_in(&admin, ProviderId::Openai)
             .unwrap();
         engine
-            .end_provider_sign_in(&admin, ProviderId::Openai)
+            .cancel_provider_sign_in(&admin, ProviderId::Openai)
             .unwrap();
         assert_eq!(
             engine
@@ -1367,34 +1313,48 @@ mod tests {
     }
 
     #[test]
-    fn cancelling_a_new_sign_in_keeps_the_account_that_is_signed_in() {
+    fn cancelling_only_cancels_and_signing_out_is_its_own_action() {
         let (engine, fakes, admin, _) = setup();
+        sign_in_chatgpt(&engine, &fakes, &admin, "acct-1");
+
+        // Cancelling with nothing waiting changes nothing.
         engine
-            .start_provider_sign_in(&admin, ProviderId::Openai)
+            .cancel_provider_sign_in(&admin, ProviderId::Openai)
             .unwrap();
-        fakes.net.finish_device(&chatgpt_token("acct-1"));
-        expire_poll_wait(&engine, ProviderId::Openai);
-        engine.provider_sign_in(&admin, ProviderId::Openai).unwrap();
+        assert_eq!(
+            state_of(&engine, &admin, ProviderId::Openai),
+            SignInState::SignedIn
+        );
 
         // A second sign-in is started and cancelled: the account stays.
         engine
             .start_provider_sign_in(&admin, ProviderId::Openai)
             .unwrap();
         engine
-            .end_provider_sign_in(&admin, ProviderId::Openai)
+            .cancel_provider_sign_in(&admin, ProviderId::Openai)
             .unwrap();
-        let state = |engine: &Engine| {
-            engine
-                .provider_sign_in(&admin, ProviderId::Openai)
-                .unwrap()
-                .state
-        };
-        assert_eq!(state(&engine), SignInState::SignedIn);
-        // With none under way, the same call signs out.
+        assert_eq!(
+            state_of(&engine, &admin, ProviderId::Openai),
+            SignInState::SignedIn
+        );
+
+        // Signing out is what forgets it, and it leaves a waiting sign-in alone.
         engine
-            .end_provider_sign_in(&admin, ProviderId::Openai)
+            .start_provider_sign_in(&admin, ProviderId::Openai)
             .unwrap();
-        assert_eq!(state(&engine), SignInState::SignedOut);
+        engine
+            .sign_out_provider(&admin, ProviderId::Openai)
+            .unwrap();
+        assert_eq!(
+            engine.stored_login(ProviderId::Openai).unwrap().map(|_| ()),
+            None
+        );
+        assert_eq!(
+            state_of(&engine, &admin, ProviderId::Openai),
+            SignInState::Waiting
+        );
+        let none = engine.providers(&admin).unwrap();
+        assert_eq!(none[1].using, "none");
     }
 
     #[test]
@@ -1535,82 +1495,6 @@ mod tests {
     }
 
     #[test]
-    fn a_sign_in_cancelled_while_its_code_is_exchanged_does_not_sign_in() {
-        let (engine, fakes, admin, _) = setup();
-        // ChatGPT: the device code is exchanged after the person finished.
-        engine
-            .start_provider_sign_in(&admin, ProviderId::Openai)
-            .unwrap();
-        fakes.net.finish_device(&chatgpt_token("acct-1"));
-        expire_poll_wait(&engine, ProviderId::Openai);
-        let (cancel, who) = (engine.clone(), admin.clone());
-        fakes.net.during_exchange(move || {
-            cancel
-                .end_provider_sign_in(&who, ProviderId::Openai)
-                .unwrap();
-        });
-        let state = engine
-            .provider_sign_in(&admin, ProviderId::Openai)
-            .unwrap()
-            .state;
-        assert_eq!(state, SignInState::SignedOut, "{state:?}");
-        assert_eq!(
-            engine.stored_login(ProviderId::Openai).unwrap().map(|_| ()),
-            None
-        );
-
-        // A sign-in restarted meanwhile keeps its own state.
-        engine
-            .start_provider_sign_in(&admin, ProviderId::Openai)
-            .unwrap();
-        expire_poll_wait(&engine, ProviderId::Openai);
-        let (restart, who) = (engine.clone(), admin.clone());
-        fakes.net.during_exchange(move || {
-            restart
-                .start_provider_sign_in(&who, ProviderId::Openai)
-                .unwrap();
-        });
-        let state = engine.provider_sign_in(&admin, ProviderId::Openai).unwrap();
-        assert_eq!(
-            state.state,
-            SignInState::Waiting,
-            "the newer sign-in is still waiting"
-        );
-        assert_eq!(
-            engine.stored_login(ProviderId::Openai).unwrap().map(|_| ()),
-            None
-        );
-
-        // Claude: the pasted code is exchanged while the sign-in is cancelled.
-        let waiting = engine
-            .start_provider_sign_in(&admin, ProviderId::Anthropic)
-            .unwrap();
-        let verifier = waiting
-            .url
-            .unwrap()
-            .split("state=")
-            .nth(1)
-            .unwrap()
-            .to_owned();
-        let (cancel, who) = (engine.clone(), admin.clone());
-        fakes.net.during_exchange(move || {
-            cancel
-                .end_provider_sign_in(&who, ProviderId::Anthropic)
-                .unwrap();
-        });
-        let result =
-            engine.finish_provider_sign_in(&admin, ProviderId::Anthropic, &format!("c#{verifier}"));
-        assert!(matches!(result, Err(EngineError::Invalid(_))), "{result:?}");
-        assert_eq!(
-            engine
-                .stored_login(ProviderId::Anthropic)
-                .unwrap()
-                .map(|_| ()),
-            None
-        );
-    }
-
-    #[test]
     fn a_login_is_renewed_to_outlast_the_longest_run() {
         let short = AgentConfig::default();
         assert_eq!(
@@ -1662,221 +1546,6 @@ mod tests {
     }
 
     #[test]
-    fn an_attempt_that_finishes_after_a_newer_start_or_cancel_was_asked_for_is_not_accepted() {
-        let (engine, fakes, admin, _) = setup();
-        let reserve = |engine: &Engine, provider| {
-            // A restart or cancel that has asked for its place and waits for the pending state.
-            engine.providers.as_ref().unwrap().reserve(provider);
-        };
-
-        engine
-            .start_provider_sign_in(&admin, ProviderId::Openai)
-            .unwrap();
-        fakes.net.finish_device(&chatgpt_token("acct-1"));
-        expire_poll_wait(&engine, ProviderId::Openai);
-        let asked = engine.clone();
-        fakes
-            .net
-            .during_exchange(move || reserve(&asked, ProviderId::Openai));
-        engine.provider_sign_in(&admin, ProviderId::Openai).unwrap();
-        assert_eq!(
-            engine.stored_login(ProviderId::Openai).unwrap().map(|_| ()),
-            None
-        );
-
-        let waiting = engine
-            .start_provider_sign_in(&admin, ProviderId::Anthropic)
-            .unwrap();
-        let verifier = waiting
-            .url
-            .unwrap()
-            .split("state=")
-            .nth(1)
-            .unwrap()
-            .to_owned();
-        let asked = engine.clone();
-        fakes
-            .net
-            .during_exchange(move || reserve(&asked, ProviderId::Anthropic));
-        let result =
-            engine.finish_provider_sign_in(&admin, ProviderId::Anthropic, &format!("c#{verifier}"));
-        assert!(matches!(result, Err(EngineError::Invalid(_))), "{result:?}");
-        assert_eq!(
-            engine
-                .stored_login(ProviderId::Anthropic)
-                .unwrap()
-                .map(|_| ()),
-            None
-        );
-    }
-
-    #[test]
-    fn a_start_that_answers_after_a_newer_start_or_a_cancel_does_not_overwrite_them() {
-        let (engine, fakes, admin, _) = setup();
-
-        // Two admins start a ChatGPT sign-in at once; the first one's answer comes back last.
-        let second = engine.clone();
-        let who = admin.clone();
-        fakes.net.during_device_start(move || {
-            let newer = second
-                .start_provider_sign_in(&who, ProviderId::Openai)
-                .unwrap();
-            assert_eq!(newer.user_code.as_deref(), Some("ABCD-1235"));
-        });
-        let late = engine.start_provider_sign_in(&admin, ProviderId::Openai);
-        assert!(matches!(late, Err(EngineError::Invalid(_))), "{late:?}");
-        let shown = engine.provider_sign_in(&admin, ProviderId::Openai).unwrap();
-        assert_eq!(
-            (shown.state, shown.user_code.as_deref()),
-            (SignInState::Waiting, Some("ABCD-1235")),
-            "the newer start stays"
-        );
-
-        // A cancel comes in while the provider is asked for a code: nothing is brought back.
-        engine
-            .end_provider_sign_in(&admin, ProviderId::Openai)
-            .unwrap();
-        let cancel = engine.clone();
-        let who = admin.clone();
-        fakes.net.during_device_start(move || {
-            cancel
-                .end_provider_sign_in(&who, ProviderId::Openai)
-                .unwrap();
-        });
-        let late = engine.start_provider_sign_in(&admin, ProviderId::Openai);
-        assert!(matches!(late, Err(EngineError::Invalid(_))), "{late:?}");
-        let shown = engine.provider_sign_in(&admin, ProviderId::Openai).unwrap();
-        assert_eq!(
-            shown.state,
-            SignInState::SignedOut,
-            "the cancelled start is not recreated"
-        );
-    }
-
-    #[test]
-    fn restarts_that_fail_in_any_order_leave_the_waiting_attempt_wanted() {
-        let (engine, fakes, admin, _) = setup();
-        engine
-            .start_provider_sign_in(&admin, ProviderId::Openai)
-            .unwrap();
-        let providers = engine.providers.as_ref().unwrap();
-        // Two restarts are in flight; the one asked for first fails first.
-        let first = providers.reserve(ProviderId::Openai);
-        let second = providers.reserve(ProviderId::Openai);
-        providers.keep_waiting_attempt(ProviderId::Openai, first);
-        providers.keep_waiting_attempt(ProviderId::Openai, second);
-
-        fakes.net.finish_device(&chatgpt_token("acct-1"));
-        expire_poll_wait(&engine, ProviderId::Openai);
-        let state = engine
-            .provider_sign_in(&admin, ProviderId::Openai)
-            .unwrap()
-            .state;
-        assert_eq!(
-            state,
-            SignInState::SignedIn,
-            "the attempt that was waiting still counts"
-        );
-    }
-
-    #[test]
-    fn a_restart_that_fails_during_an_exchange_leaves_that_exchange_wanted() {
-        let (engine, fakes, admin, _) = setup();
-        engine
-            .start_provider_sign_in(&admin, ProviderId::Openai)
-            .unwrap();
-        fakes.net.finish_device(&chatgpt_token("acct-1"));
-        expire_poll_wait(&engine, ProviderId::Openai);
-        // While the code is exchanged another admin restarts, and the provider cannot be reached.
-        let restart = engine.clone();
-        let who = admin.clone();
-        let net = fakes.net.clone();
-        fakes.net.during_exchange(move || {
-            net.refuse_device_start("no network");
-            assert!(
-                restart
-                    .start_provider_sign_in(&who, ProviderId::Openai)
-                    .is_err()
-            );
-        });
-        let state = engine
-            .provider_sign_in(&admin, ProviderId::Openai)
-            .unwrap()
-            .state;
-        assert_eq!(
-            state,
-            SignInState::SignedIn,
-            "the attempt that was waiting finished"
-        );
-    }
-
-    #[test]
-    fn an_exchange_superseded_while_in_flight_ends_the_attempt_instead_of_leaving_it_waiting() {
-        let (engine, fakes, admin, _) = setup();
-        engine
-            .start_provider_sign_in(&admin, ProviderId::Openai)
-            .unwrap();
-        fakes.net.finish_device(&chatgpt_token("acct-1"));
-        expire_poll_wait(&engine, ProviderId::Openai);
-        // A restart has asked for its place and is still waiting when the exchange returns.
-        let asked = engine.clone();
-        fakes.net.during_exchange(move || {
-            asked
-                .providers
-                .as_ref()
-                .unwrap()
-                .reserve(ProviderId::Openai);
-        });
-        let shown = engine.provider_sign_in(&admin, ProviderId::Openai).unwrap();
-        assert_eq!(
-            shown.state,
-            SignInState::Failed,
-            "the used-up code cannot finish"
-        );
-        assert_eq!(
-            engine.stored_login(ProviderId::Openai).unwrap().map(|_| ()),
-            None
-        );
-        // Asking again changes nothing and does not poll the provider again.
-        let polls = fakes.net.polls();
-        expire_poll_wait(&engine, ProviderId::Openai);
-        engine.provider_sign_in(&admin, ProviderId::Openai).unwrap();
-        assert_eq!(fakes.net.polls(), polls);
-    }
-
-    #[test]
-    fn a_second_look_while_the_code_is_exchanged_does_not_spoil_the_sign_in() {
-        let (engine, fakes, admin, _) = setup();
-        engine
-            .start_provider_sign_in(&admin, ProviderId::Openai)
-            .unwrap();
-        fakes.net.finish_device(&chatgpt_token("acct-1"));
-        expire_poll_wait(&engine, ProviderId::Openai);
-        // The exchange is slow; another page asks meanwhile, and the code is used up by now.
-        let other_page = engine.clone();
-        let who = admin.clone();
-        let net = fakes.net.clone();
-        fakes.net.during_exchange(move || {
-            net.fail_device("the code was already used");
-            expire_poll_wait(&other_page, ProviderId::Openai);
-            let seen = other_page
-                .provider_sign_in(&who, ProviderId::Openai)
-                .unwrap();
-            assert_eq!(seen.state, SignInState::Waiting);
-        });
-        let state = engine
-            .provider_sign_in(&admin, ProviderId::Openai)
-            .unwrap()
-            .state;
-        assert_eq!(state, SignInState::SignedIn);
-        assert_eq!(
-            fakes.net.polls(),
-            1,
-            "nobody asked the provider again while exchanging"
-        );
-    }
-
-    #[test]
     fn signing_out_waits_for_a_renewal_in_flight() {
         let (engine, fakes, admin, _) = setup();
         engine
@@ -1893,7 +1562,7 @@ mod tests {
         fakes.net.during_refresh(move || {
             let (out, who) = (out.clone(), who.clone());
             *handle.lock().unwrap() = Some(std::thread::spawn(move || {
-                out.end_provider_sign_in(&who, ProviderId::Openai).unwrap();
+                out.sign_out_provider(&who, ProviderId::Openai).unwrap();
             }));
             std::thread::sleep(std::time::Duration::from_millis(150));
         });
@@ -1913,26 +1582,234 @@ mod tests {
     }
 
     #[test]
-    fn a_restart_that_fails_leaves_the_waiting_attempt_alone() {
+    fn a_provider_has_one_sign_in_at_a_time() {
+        let (engine, fakes, admin, _) = setup();
+        let first = engine
+            .start_provider_sign_in(&admin, ProviderId::Openai)
+            .unwrap();
+        let again = engine.start_provider_sign_in(&admin, ProviderId::Openai);
+        assert_eq!(
+            again,
+            Err(EngineError::Exists("a sign-in for this provider"))
+        );
+        // The one that waits is untouched and still finishes.
+        assert_eq!(
+            engine
+                .provider_sign_in(&admin, ProviderId::Openai)
+                .unwrap()
+                .user_code,
+            first.user_code
+        );
+        assert_eq!(fakes.net.device_starts(), 1, "the provider was not asked");
+        // Another provider has its own.
+        engine
+            .start_provider_sign_in(&admin, ProviderId::Anthropic)
+            .unwrap();
+        fakes.net.finish_device(&chatgpt_token("acct-1"));
+        expire_poll_wait(&engine, ProviderId::Openai);
+        assert_eq!(
+            state_of(&engine, &admin, ProviderId::Openai),
+            SignInState::SignedIn
+        );
+    }
+
+    #[test]
+    fn a_sign_in_that_waited_too_long_is_given_up_and_can_be_started_again() {
+        let (engine, _, admin, _) = setup();
+        engine
+            .start_provider_sign_in(&admin, ProviderId::Openai)
+            .unwrap();
+        age_attempt(&engine, ProviderId::Openai);
+        // Starting does not need a look at it first.
+        let restarted = engine
+            .start_provider_sign_in(&admin, ProviderId::Openai)
+            .unwrap();
+        assert_eq!(restarted.state, SignInState::Waiting);
+
+        age_attempt(&engine, ProviderId::Openai);
+        let given_up = engine.provider_sign_in(&admin, ProviderId::Openai).unwrap();
+        assert_eq!(given_up.state, SignInState::Failed);
+        assert!(given_up.error.unwrap().contains("too long"));
+        // A code pasted after that is not taken.
+        engine
+            .start_provider_sign_in(&admin, ProviderId::Anthropic)
+            .unwrap();
+        age_attempt(&engine, ProviderId::Anthropic);
+        assert!(matches!(
+            engine.finish_provider_sign_in(&admin, ProviderId::Anthropic, "code"),
+            Err(EngineError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn signing_in_again_replaces_the_account_only_when_it_succeeds() {
+        let (engine, fakes, admin, _) = setup();
+        sign_in_chatgpt(&engine, &fakes, &admin, "acct-1");
+        let config = engine.agent_config();
+        let account = |engine: &Engine| match engine
+            .run_credential(&config, AgentKind::Codex)
+            .unwrap()
+            .unwrap()
+            .login
+        {
+            Some(RunLogin::Openai { account_id, .. }) => account_id,
+            other => panic!("{other:?}"),
+        };
+
+        // A sign-in that fails leaves the account that is signed in.
+        engine
+            .start_provider_sign_in(&admin, ProviderId::Openai)
+            .unwrap();
+        assert_eq!(account(&engine), "acct-1", "still the one in use meanwhile");
+        fakes.net.fail_device("the code expired");
+        expire_poll_wait(&engine, ProviderId::Openai);
+        let failed = engine.provider_sign_in(&admin, ProviderId::Openai).unwrap();
+        assert_eq!(
+            (
+                failed.state,
+                failed.error.as_deref(),
+                failed.account.as_deref()
+            ),
+            (
+                SignInState::SignedIn,
+                Some("the code expired"),
+                Some("dana@example.com")
+            ),
+            "the account is still signed in; the failure is only told"
+        );
+        assert_eq!(account(&engine), "acct-1");
+
+        // One the provider cannot be asked to start leaves it too.
+        fakes.net.refuse_device_start("no network");
+        assert!(matches!(
+            engine.start_provider_sign_in(&admin, ProviderId::Openai),
+            Err(EngineError::Unavailable(_))
+        ));
+        assert_eq!(
+            state_of(&engine, &admin, ProviderId::Openai),
+            SignInState::SignedIn
+        );
+
+        // One that succeeds replaces it.
+        engine
+            .start_provider_sign_in(&admin, ProviderId::Openai)
+            .unwrap();
+        fakes.net.finish_device(&chatgpt_token("acct-2"));
+        expire_poll_wait(&engine, ProviderId::Openai);
+        assert_eq!(
+            state_of(&engine, &admin, ProviderId::Openai),
+            SignInState::SignedIn
+        );
+        assert_eq!(account(&engine), "acct-2");
+    }
+
+    #[test]
+    fn a_renewal_in_flight_cannot_bring_back_the_account_a_new_sign_in_replaced() {
+        let (engine, fakes, admin, _) = setup();
+        sign_in_claude(&engine, &admin);
+        // The test engine has a Claude key of its own; the login is what runs use here.
+        engine
+            .choose_provider_auth(&admin, ProviderId::Anthropic, "oauth")
+            .unwrap();
+        age_login(&engine, ProviderId::Anthropic, 10);
+        let url = engine
+            .start_provider_sign_in(&admin, ProviderId::Anthropic)
+            .unwrap()
+            .url
+            .unwrap();
+        let verifier = url.split("state=").nth(1).unwrap().to_owned();
+
+        // The new account's code is pasted (on another thread, as a request would be) while the
+        // old account's login is being renewed.
+        let pasting = std::sync::Arc::new(Mutex::new(None));
+        let (paste, who, handle) = (engine.clone(), admin.clone(), pasting.clone());
+        fakes.net.during_refresh(move || {
+            let (paste, who, verifier) = (paste.clone(), who.clone(), verifier.clone());
+            *handle.lock().unwrap() = Some(std::thread::spawn(move || {
+                paste
+                    .finish_provider_sign_in(
+                        &who,
+                        ProviderId::Anthropic,
+                        &format!("new-code#{verifier}"),
+                    )
+                    .unwrap();
+            }));
+            std::thread::sleep(std::time::Duration::from_millis(150));
+        });
+        engine
+            .run_credential(&engine.agent_config(), AgentKind::Claude)
+            .unwrap();
+        pasting.lock().unwrap().take().unwrap().join().unwrap();
+
+        // The renewal gave "sk-ant-oat-2"; the new sign-in came after it and is what is kept.
+        assert_eq!(
+            engine
+                .stored_login(ProviderId::Anthropic)
+                .unwrap()
+                .unwrap()
+                .access,
+            "sk-ant-oat-1"
+        );
+        assert_eq!(fakes.net.refreshes(), 1);
+    }
+
+    #[test]
+    fn looking_at_a_sign_in_does_not_wait_for_one_in_flight() {
         let (engine, fakes, admin, _) = setup();
         engine
             .start_provider_sign_in(&admin, ProviderId::Openai)
             .unwrap();
-        fakes.net.refuse_device_start("no network");
-        let restarted = engine.start_provider_sign_in(&admin, ProviderId::Openai);
-        assert!(
-            matches!(restarted, Err(EngineError::Unavailable(_))),
-            "{restarted:?}"
-        );
-
-        // The person finishes the first attempt after all: it still counts.
         fakes.net.finish_device(&chatgpt_token("acct-1"));
         expire_poll_wait(&engine, ProviderId::Openai);
-        let state = engine
-            .provider_sign_in(&admin, ProviderId::Openai)
-            .unwrap()
-            .state;
-        assert_eq!(state, SignInState::SignedIn);
+
+        // Another page looks while the code is being exchanged: it gets the state as it is.
+        let seen = std::sync::Arc::new(Mutex::new(None));
+        let (look, who, saw) = (engine.clone(), admin.clone(), seen.clone());
+        fakes.net.during_exchange(move || {
+            // Even when the provider's interval has passed, it is not asked while this goes on.
+            expire_poll_wait(&look, ProviderId::Openai);
+            *saw.lock().unwrap() = Some(look.provider_sign_in(&who, ProviderId::Openai).unwrap());
+        });
+        assert_eq!(
+            state_of(&engine, &admin, ProviderId::Openai),
+            SignInState::SignedIn
+        );
+        let during = seen.lock().unwrap().take().unwrap();
+        assert_eq!(during.state, SignInState::Waiting);
+        assert_eq!(
+            fakes.net.polls(),
+            1,
+            "the provider was asked once, not again"
+        );
+    }
+
+    #[test]
+    fn cancelling_does_not_undo_a_sign_in_that_is_finishing() {
+        let (engine, fakes, admin, _) = setup();
+        engine
+            .start_provider_sign_in(&admin, ProviderId::Openai)
+            .unwrap();
+        fakes.net.finish_device(&chatgpt_token("acct-1"));
+        expire_poll_wait(&engine, ProviderId::Openai);
+
+        // The cancel arrives while the code is exchanged: it comes after the sign-in.
+        let cancelling = std::sync::Arc::new(Mutex::new(None));
+        let (cancel, who, handle) = (engine.clone(), admin.clone(), cancelling.clone());
+        fakes.net.during_exchange(move || {
+            let (cancel, who) = (cancel.clone(), who.clone());
+            *handle.lock().unwrap() = Some(std::thread::spawn(move || {
+                cancel
+                    .cancel_provider_sign_in(&who, ProviderId::Openai)
+                    .unwrap();
+            }));
+            std::thread::sleep(std::time::Duration::from_millis(150));
+        });
+        engine.provider_sign_in(&admin, ProviderId::Openai).unwrap();
+        cancelling.lock().unwrap().take().unwrap().join().unwrap();
+        assert_eq!(
+            state_of(&engine, &admin, ProviderId::Openai),
+            SignInState::SignedIn
+        );
     }
 
     #[test]

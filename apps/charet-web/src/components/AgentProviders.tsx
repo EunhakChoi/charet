@@ -251,7 +251,7 @@ function SignInRow({ provider, oauth }: { provider: Provider; oauth: OAuthStatus
   const t = useT();
   const client = useQueryClient();
   const name = t(META[provider.id].name);
-  const { startSignIn, signOut } = useProviderActions();
+  const { startSignIn, cancelSignIn, signOut } = useProviderActions();
   const [problem, setProblem] = useState<string | undefined>();
   const popup = useRef<Window | null>(null);
   const waiting = oauth.state === "waiting";
@@ -295,7 +295,7 @@ function SignInRow({ provider, oauth }: { provider: Provider; oauth: OAuthStatus
   const cancel = () => {
     popup.current?.close();
     popup.current = null;
-    signOut.mutate(provider.id);
+    cancelSignIn.mutate(provider.id);
   };
 
   if (oauth.state === "signed_in") {
@@ -313,6 +313,17 @@ function SignInRow({ provider, oauth }: { provider: Provider; oauth: OAuthStatus
             type="button"
             size="sm"
             variant="ghost"
+            disabled={startSignIn.isPending}
+            onClick={open}
+            data-testid={`sign-in-again-${provider.id}`}
+          >
+            <LogIn />
+            {t("web.providers.switchAccount")}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
             disabled={signOut.isPending}
             onClick={() => signOut.mutate(provider.id)}
           >
@@ -320,6 +331,8 @@ function SignInRow({ provider, oauth }: { provider: Provider; oauth: OAuthStatus
             {t("web.providers.signOut")}
           </Button>
         </div>
+        {oauth.error && <Status bad>{t("web.providers.failed", { error: oauth.error })}</Status>}
+        {problem && <Status bad>{problem}</Status>}
       </Row>
     );
   }
