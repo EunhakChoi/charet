@@ -40,8 +40,8 @@ charet ls                # screens, stories, flows and whether their captures ar
 - "Enter your token first" / "token was reissued or removed" → the CLI is not signed in. When the
   server runs on this machine (`charet doctor` reaches it at localhost), run `charet setup --yes`
   yourself: it reads the owner's token from the server and keeps it for the CLI — no need to ask
-  anyone. It also puts this skill in the agent's own folder unless it finds one already (it says
-  so, and leaves that one alone). Its output has the owner's admin link, which carries the token:
+  anyone. It does not install this skill; that is `charet skill install`, only when the user wants
+  it. Its output has the owner's admin link, which carries the token:
   whoever set charet up needs it once to sign their browser in, so hand it to them in this
   conversation when they ask for it, and on a fresh setup they have not opened yet. Keep it out of
   anything that outlives the chat (commits, files, PR text, channels, other people); the team gets
