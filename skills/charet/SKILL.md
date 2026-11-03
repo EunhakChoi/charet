@@ -108,6 +108,11 @@ charet ls --stale                   # screens whose capture is older than the co
   versions of those files, so a new dependency will not show up in `check` yet. Tell the user.
 - `[charet] missing mock GET /api/…` means the screen calls an API no handler answers. Add the
   handler; a silent failure there would show the team a broken screen.
+- `[charet] unmocked request reached the network: GET /api/…` is a `fetch` or XHR that went out
+  although mocks answer in the page: mostly an API client the app made before the mocks started
+  (the frame imports the app at the top). Import the app inside `renderScreen`
+  (`references/project.md`, frame.tsx). A request you meant to let through (`passthrough()`) shows
+  up the same way.
 - Open the saved pictures and look at them before saying it works. A page can pass `check` and
   still be wrong (empty table, clipped dialog, wrong state).
 - A shared component change makes many screens stale: `charet capture $(charet ls --stale)`.

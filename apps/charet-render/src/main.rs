@@ -303,7 +303,28 @@ mod tests {
               document.documentElement.dataset.charetReady = "true";
             </script></body></html>"#;
         let never = "<!doctype html><html><body>loading</body></html>";
+        // Ready once its `fetch` is answered, as a client that never saw the mocks would call it.
+        let bypass = r#"<!doctype html><html><body><script>
+              fetch("/api/auth/me").catch(() => {}).finally(() => {
+                document.documentElement.dataset.charetReady = "true";
+              });
+            </script></body></html>"#;
+        // The frame's missing-mock notice, then the request it let through: one issue, not two.
+        let missing = r#"<!doctype html><html><body><script>
+              console.warn("[charet] missing mock GET /api/y");
+              fetch("/api/y").catch(() => {}).finally(() => {
+                document.documentElement.dataset.charetReady = "true";
+              });
+            </script></body></html>"#;
         let app = Router::new()
+            .route(
+                "/bypass",
+                get(move || async move { axum::response::Html(bypass) }),
+            )
+            .route(
+                "/missing",
+                get(move || async move { axum::response::Html(missing) }),
+            )
             .route(
                 "/ready",
                 get(move || async move { axum::response::Html(ready) }),
@@ -354,6 +375,22 @@ mod tests {
         assert_eq!(u32::from_be_bytes(png[16..20].try_into().unwrap()), 640);
         let resources = shot.resources.unwrap();
         assert!(resources[0].ends_with("/ready"));
+
+        let bypass = chrome.render(&request("/bypass", 10_000)).await;
+        assert_eq!(bypass.ready.as_deref(), Some("true"), "{:?}", bypass.issues);
+        assert_eq!(bypass.issues.len(), 1, "{:?}", bypass.issues);
+        assert!(
+            bypass.issues[0]
+                .starts_with("[charet] unmocked request reached the network: GET /api/auth/me"),
+            "{:?}",
+            bypass.issues
+        );
+        let missing = chrome.render(&request("/missing", 10_000)).await;
+        assert_eq!(
+            missing.issues,
+            ["[charet] missing mock GET /api/y"],
+            "the same request is not reported twice"
+        );
 
         let never = chrome.render(&request("/never", 500)).await;
         assert_eq!(never.ready, None);
