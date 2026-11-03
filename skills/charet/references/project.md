@@ -65,7 +65,10 @@ Rules (checked when the project loads):
   that id turns it into a real step.
 - A flow step object whose id is an existing screen stays a real step with its own `title` / `note`.
 - Pages and flows take an optional `note`, shown in the web tool and the CLI.
-- A screen's `query` (`"?tab=runs"`) is set on the URL before it renders.
+- A screen's `query` is an object, `{ tab: "runs" }` (not a `"?tab=runs"` string). It is set on the
+  URL before the screen renders and added to the `route` that `renderScreen` gets, so a memory
+  router shows the tab too. A frame built on an older SDK passes the route without it: serialize
+  `screen.query` into `initialEntries` yourself.
 - `setup(kit)`: `kit.click(selector, text?)`, `kit.fill(selector, value)`, `kit.find(selector, text?)`,
   `kit.wait(ms)`. Selectors are CSS, searched in the whole document (dialogs in portals too); text
   matches the trimmed text or the `aria-label`.
@@ -108,18 +111,26 @@ file (`"/logo.png"`) are rewritten to `import.meta.env.BASE_URL` at build time.
 ```tsx
 import { startFrame } from "@charet/sdk/frame";
 import { createMemoryRouter, RouterProvider } from "react-router";
-import { routes } from "@/routes";
 import "@/index.css";
 import project from "./project.tsx";
 
 void startFrame({
   project,
-  renderScreen: (_screen, route) => (
-    <RouterProvider router={createMemoryRouter(routes, { initialEntries: [route] })} />
-  ),
+  // Load the app here, after the mocks run (see below).
+  renderScreen: async (_screen, route) => {
+    const { routes } = await import("@/routes");
+    return <RouterProvider router={createMemoryRouter(routes, { initialEntries: [route] })} />;
+  },
   wrapStory: (node) => <div className="p-6">{node}</div>,
 });
 ```
+
+**Import the app inside `renderScreen`, not at the top of `frame.tsx`.** The mocks answer `fetch` and
+XHR from the moment `startFrame` has started them. An app that builds its API client while its
+modules load (a module-level `createClient(...)`, or `const f = fetch`) keeps the `fetch` it saw
+then: imported at the top, that client talks to the real network, the screen shows a login page
+or `HTTP 404` instead of the mock data. `renderScreen` may be
+async for this reason; `project.tsx` should import only types and leaf components from the app.
 
 Wrap screens in whatever providers the app needs (query client, theme, auth stubs), and in
 `<StrictMode>` when the app's `main.tsx` uses it. The frame
