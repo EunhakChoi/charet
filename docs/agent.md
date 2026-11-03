@@ -19,14 +19,27 @@ This adds two things: the **agent** service, which starts one container per run 
 machine's Docker socket, and the **charet-agent-run** image those containers use (the agents, the
 `charet` CLI and the charet skill; about 1.5 GB).
 
-Then give it an API key, either:
+Then give it an account in **Settings › Web agent** (admins). Per provider (Anthropic for Claude,
+OpenAI for Codex) use an API key, a subscription sign-in, or both:
 
-- **Team › Web agent** (admins): paste the key. It is stored encrypted with the server key and
-  only its last 4 characters are ever shown; or
-- `.env` next to `compose.yaml`: `CHARET_ANTHROPIC_API_KEY=…` (Claude) and/or
-  `CHARET_OPENAI_API_KEY=…` (Codex). These win over the page and cannot be changed there.
+- **API key**: paste it and press **Check**. The provider says whether it works; only a key that
+  works can be **Saved**. It is stored encrypted with the server key and only its last 4
+  characters are ever shown.
+- **Sign in with Claude / ChatGPT**: opens the provider's own login in a new window.
+  - ChatGPT: the page shows a code; type it at the provider's page. charet notices when you are done.
+  - Claude: after signing in, the provider's page shows a code; paste it back into charet.
+  - charet keeps the login encrypted, renews it before each run, and hands the run's container only
+    the short-lived access token. The refresh token never leaves the server.
+- With both set, pick which one the agent uses.
+- `.env` next to `compose.yaml`: `CHARET_ANTHROPIC_API_KEY=…` (Claude), `CHARET_OPENAI_API_KEY=…`
+  (Codex), `CHARET_GOOGLE_API_KEY=…` (kept for later; nothing runs on Google yet). These win over
+  the page and cannot be changed there.
 
 The same page sets the default agent and a model per agent (empty is the agent's own default).
+
+A subscription sign-in uses the sign-in flows of the providers' own command line tools. It is meant
+for a personal install or a small trusted team: check your provider's terms before putting a
+shared team's work on one person's subscription.
 
 ## Asking
 
@@ -47,7 +60,7 @@ leaves no empty draft behind.
 
 ## Costs
 
-**Team › Agent costs** lists each person's runs, tokens and cost. Claude reports its cost. For Codex
+**Settings › Web agent** also lists each person's runs, tokens and cost. Claude reports its cost. For Codex
 the cost comes from a price table you give charet-agent (`CHARET_AGENT_PRICES`, JSON of dollars
 per million tokens, e.g. `{"gpt-5.5": {"input": 1.25, "output": 10, "cachedInput": 0.125}}`); runs
 on a model without a price are counted as unpriced. There is no spending limit; set one with your
@@ -60,14 +73,16 @@ model provider.
   (`CHARET_AGENT_TIMEOUT_MIN`, default 30).
 - Its network is internal. The only ways out are the agent service's relay to the server's
   **agent door** and an HTTPS proxy that opens tunnels only to the model APIs
-  (`CHARET_AGENT_ALLOW_HOSTS`, default `api.anthropic.com,api.openai.com`). Package installs from
-  the internet fail.
+  (`CHARET_AGENT_ALLOW_HOSTS`, default `api.anthropic.com,api.openai.com,chatgpt.com`). Package
+  installs from the internet fail. If a run on a subscription cannot connect, add the host it
+  reports to this list.
 - At the agent door (`CHARET_AGENT_BIND`, not published on the host) a run's token works only while
   it runs, only for its project, and only to read the project, push to its own branch, check and
   capture. It cannot merge, comment, see other projects or reach the admin API. Its pushes show as
   *Name · agent*.
-- The vendor key goes into the run's container (the agent needs it). Use a key made for charet so
-  it can be revoked on its own.
+- The vendor key (or, for a sign-in, its short-lived access token) goes into the run's container
+  (the agent needs it). Use a key made for charet so it can be revoked on its own. A run cannot
+  renew a login by itself, so charet renews it first when it has less than 35 minutes left.
 - The agent service holds the Docker socket, which is root on this machine. It is not reachable
   from run containers except through its two relays and its token-protected API.
 
@@ -75,7 +90,7 @@ model provider.
 
 | Variable | Where | Default | |
 |---|---|---|---|
-| `CHARET_ANTHROPIC_API_KEY`, `CHARET_OPENAI_API_KEY` | `.env` | — | keys (or Team › Web agent) |
+| `CHARET_ANTHROPIC_API_KEY`, `CHARET_OPENAI_API_KEY`, `CHARET_GOOGLE_API_KEY` | `.env` | — | keys (or Settings › Web agent) |
 | `CHARET_AGENT_MAX_RUNNING` | `.env` | 3 | runs at once |
 | `CHARET_AGENT_NETWORK` | `.env` | `charet-agent-runs` | the runs' internal network |
 | `CHARET_AGENT_TIMEOUT_MIN` | agent service | 30 | longest run |
