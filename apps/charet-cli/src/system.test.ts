@@ -1,13 +1,31 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { after, test } from "node:test";
 import { run } from "./main.ts";
 import { browserUrl, newer, publishes } from "./system.ts";
 
-const home = mkdtempSync(join(tmpdir(), "charet-system-"));
-after(() => rmSync(home, { recursive: true, force: true }));
+// The skill lookup walks up from the working directory, so the sandbox stays out of any project
+// that has a charet skill of its own (a machine's TMPDIR can sit inside one).
+const sandboxRoot = existsSync("/tmp") ? "/tmp" : tmpdir();
+const home = mkdtempSync(join(sandboxRoot, "charet-system-"));
+/** A second sandbox: `home` holds an installed skill, which a lookup from inside it would find. */
+const alone = mkdtempSync(join(sandboxRoot, "charet-alone-"));
+const SKILL_DIR = resolve(import.meta.dirname, "../../../skills/charet");
+after(() => {
+  rmSync(home, { recursive: true, force: true });
+  rmSync(alone, { recursive: true, force: true });
+});
 
 const json = (body: unknown) =>
   new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
@@ -34,6 +52,7 @@ async function charet(
     sh?: (c: string, a: string[]) => string | undefined;
     info?: unknown;
     env?: NodeJS.ProcessEnv;
+    cwd?: string;
   } = {},
 ) {
   const lines: string[] = [];
@@ -41,7 +60,7 @@ async function charet(
   const answers = [...(options.answers ?? [])];
   const code = await run(args, {
     locale: "en",
-    cwd: home,
+    cwd: options.cwd ?? home,
     env: { HOME: home, CHARET_CONFIG_DIR: join(home, "config"), ...options.env },
     fetch: async () =>
       options.info === undefined
@@ -90,8 +109,10 @@ test("setup asks to star once, stars with gh, and installs the skill", async () 
   assert.ok(!existsSync(join(home, ".claude/skills/charet/evals")));
   assert.equal(JSON.parse(readFileSync(join(home, "config/settings.json"), "utf8")).star, "yes");
 
-  const again = await charet(["setup"], { answers: ["n"], sh, info: system() });
-  assert.deepEqual(again.asked, ["Install the charet skill for claude? [Y/n] "]);
+  // An identical copy is already there: said so, not asked about.
+  const again = await charet(["setup"], { answers: [], sh, info: system() });
+  assert.deepEqual(again.asked, []);
+  assert.match(again.out, /charet skill for claude in .* is already up to date/);
 });
 
 test("setup signs the CLI in as the owner of a charet on this machine", async () => {
@@ -129,13 +150,71 @@ test("setup signs the CLI in as the owner of a charet on this machine", async ()
 });
 
 test("setup never asks without a terminal or with --yes", async () => {
+  mkdirSync(join(alone, "h2/.claude"), { recursive: true });
   const quiet = await charet(["setup", "--yes"], {
     answers: [],
-    env: { CHARET_CONFIG_DIR: join(home, "c2") },
+    cwd: alone,
+    env: { CHARET_CONFIG_DIR: join(alone, "c2"), HOME: join(alone, "h2") },
   });
   assert.deepEqual(quiet.asked, []);
   assert.match(quiet.out, /No server at/);
   assert.match(quiet.out, /Installed the charet skill for claude/);
+});
+
+test("setup leaves the skill alone where an agent already finds one from here", async () => {
+  const user = join(home, "h3");
+  mkdirSync(join(user, ".claude"), { recursive: true });
+  mkdirSync(join(user, ".codex"), { recursive: true });
+  // A shared project folder above the working directory, as `.claude/skills` and `.agents/skills`.
+  const project = join(home, "shared");
+  for (const folder of [".claude", ".agents"]) {
+    mkdirSync(join(project, folder, "skills/charet"), { recursive: true });
+    writeFileSync(join(project, folder, "skills/charet/SKILL.md"), "mine\n");
+  }
+  const cwd = join(project, "app");
+  mkdirSync(cwd, { recursive: true });
+  const setup = await charet(["setup", "--yes"], { cwd, env: { HOME: user } });
+  assert.match(
+    setup.out,
+    /claude already finds a charet skill at .*shared\/\.claude\/skills\/charet/,
+  );
+  assert.match(
+    setup.out,
+    /codex already finds a charet skill at .*shared\/\.agents\/skills\/charet/,
+  );
+  assert.ok(!existsSync(join(user, ".claude/skills/charet")));
+  assert.ok(!existsSync(join(user, ".codex/skills/charet")));
+  assert.equal(readFileSync(join(project, ".claude/skills/charet/SKILL.md"), "utf8"), "mine\n");
+
+  // Asked for outright, `skill install` still puts a copy in the agent's own folder.
+  const forced = await charet(["skill", "install", "--codex"], { cwd, env: { HOME: user } });
+  assert.match(forced.out, /Installed the charet skill for codex/);
+  assert.ok(existsSync(join(user, ".codex/skills/charet/SKILL.md")));
+});
+
+test("skill install skips a current copy, updates an old one and leaves a link to the repo", async () => {
+  const user = join(home, "h4");
+  mkdirSync(join(user, ".claude"), { recursive: true });
+  const env = { HOME: user };
+  const first = await charet(["skill", "install", "--claude"], { env });
+  assert.match(first.out, /Installed the charet skill for claude/);
+  const installed = join(user, ".claude/skills/charet/SKILL.md");
+  assert.match((await charet(["skill", "install", "--claude"], { env })).out, /already up to date/);
+
+  writeFileSync(installed, "an old copy\n");
+  assert.match(
+    (await charet(["skill", "install", "--claude"], { env })).out,
+    /Installed the charet skill/,
+  );
+  assert.equal(readFileSync(installed, "utf8"), readFileSync(join(SKILL_DIR, "SKILL.md"), "utf8"));
+
+  const linked = join(home, "h5");
+  mkdirSync(join(linked, ".claude/skills"), { recursive: true });
+  symlinkSync(SKILL_DIR, join(linked, ".claude/skills/charet"));
+  const result = await charet(["skill", "install", "--claude"], { env: { HOME: linked } });
+  assert.equal(result.code, 0);
+  assert.match(result.out, /link to this repository's copy/);
+  assert.ok(lstatSync(join(linked, ".claude/skills/charet")).isSymbolicLink());
 });
 
 test("skill install picks agents", async () => {

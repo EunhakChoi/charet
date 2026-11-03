@@ -121,6 +121,16 @@ charet init demo                       # a new project from the recommended temp
 charet import ../my-app                # or an existing app (with the workspace packages it uses)
 ```
 
+An alias exists only in your own shell. A coding agent's shell has none, and often not your `node`
+on its `PATH` either (nvm, fnm). For it, put a small script on the `PATH` that records where `node`
+and the clone are now:
+
+```bash
+mkdir -p ~/.local/bin
+printf '#!/bin/sh\nexec "%s" "%s/apps/charet-cli/src/main.ts" "$@"\n' "$(command -v node)" "$PWD" > ~/.local/bin/charet
+chmod +x ~/.local/bin/charet                # ~/.local/bin has to be on the PATH
+```
+
 `CHARET_URL` points the CLI at another server (default `http://127.0.0.1:5280`).
 
 ## Without Docker

@@ -144,6 +144,7 @@ async function look(
   }
   summary(ctx, failed, data.results.length);
   for (const file of saved) ctx.out(file);
+  ctx.out(t("cli.capture.branchOnly", { number: String(options.rev?.slice(1)) }, ctx.locale));
   return failed ? 1 : 0;
 }
 
