@@ -518,6 +518,7 @@
   "web.providers.signedIn": "Signed in as {account}",
   "web.providers.signedInPlain": "Signed in",
   "web.providers.signOut": "Sign out",
+  "web.providers.dismiss": "Dismiss",
   "web.providers.switchAccount": "Sign in with another account",
   "web.providers.popupBlocked": "The browser blocked the sign-in window. Allow pop-ups for this page and try again.",
   "web.providers.failed": "Sign-in failed: {error}",

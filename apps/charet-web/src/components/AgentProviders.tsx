@@ -331,7 +331,20 @@ function SignInRow({ provider, oauth }: { provider: Provider; oauth: OAuthStatus
             {t("web.providers.signOut")}
           </Button>
         </div>
-        {oauth.error && <Status bad>{t("web.providers.failed", { error: oauth.error })}</Status>}
+        {oauth.error && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Status bad>{t("web.providers.failed", { error: oauth.error })}</Status>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={cancelSignIn.isPending}
+              onClick={() => cancelSignIn.mutate(provider.id)}
+            >
+              {t("web.providers.dismiss")}
+            </Button>
+          </div>
+        )}
         {problem && <Status bad>{problem}</Status>}
       </Row>
     );
