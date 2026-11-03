@@ -1,6 +1,6 @@
 //! One Chromium for the process, a fresh browser context (storage, service workers) per render.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -11,7 +11,7 @@ use chromiumoxide::cdp::browser_protocol::log::{
     self, EventEntryAdded, LogEntryLevel, LogEntrySource,
 };
 use chromiumoxide::cdp::browser_protocol::network::{
-    self, EventLoadingFailed, EventLoadingFinished, EventRequestWillBeSent,
+    self, EventLoadingFailed, EventLoadingFinished, EventRequestWillBeSent, ResourceType,
 };
 use chromiumoxide::cdp::browser_protocol::page::{
     CaptureScreenshotFormat, CaptureScreenshotParams,
@@ -104,6 +104,8 @@ enum Source {
     Console,
     /// Browser log (failed loads).
     Log,
+    /// A `fetch` / XHR that went out on the network although mocks answer in the page.
+    Network,
     /// The renderer itself (navigation failed, never ready).
     Render,
 }
@@ -111,6 +113,9 @@ enum Source {
 #[derive(Debug, Default)]
 struct Watch {
     issues: Vec<(Source, f64, String)>,
+    /// `fetch` / XHR requests that reached the network: time, `METHOD /path?query`, host if not
+    /// the page's own.
+    unmocked: Vec<(f64, String, Option<String>)>,
     /// Requests in flight, by id.
     inflight: HashMap<String, String>,
     last_activity: Option<Instant>,
@@ -229,6 +234,7 @@ impl Chrome {
         }
         tab.close().await;
         let mut watch = lock(&watch);
+        report_unmocked(&mut watch);
         watch
             .issues
             .sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.total_cmp(&b.1)));
@@ -317,6 +323,7 @@ async fn shoot(
     .map_err(cdp)?;
 
     let w = watch.clone();
+    let page_url = request.url.clone();
     let collector = tokio::spawn(async move {
         loop {
             tokio::select! {
@@ -341,7 +348,17 @@ async fn shoot(
                         push(&w, Source::Log, *entry.timestamp.inner(), issue);
                     }
                 }
-                Some(event) = sent.next() => activity(&w, event.request_id.inner(), Some(&event.request.url)),
+                Some(event) = sent.next() => {
+                    if let Some((key, host)) = unmocked_request(
+                        &event.request.method,
+                        &event.request.url,
+                        event.r#type.as_ref(),
+                        &page_url,
+                    ) {
+                        lock(&w).unmocked.push((*event.timestamp.inner(), key, host));
+                    }
+                    activity(&w, event.request_id.inner(), Some(&event.request.url));
+                }
                 Some(event) = finished.next() => activity(&w, event.request_id.inner(), None),
                 Some(event) = failed.next() => activity(&w, event.request_id.inner(), None),
                 else => break,
@@ -448,6 +465,80 @@ async fn idle(watch: &Shared, max: Duration) {
     }
 }
 
+/// A page's own `fetch` or XHR that went out on the network. The page's mocks answer in the page,
+/// so such a request skipped them: its client was made before they started (it kept the real
+/// `fetch`), or no handler matched. Returns `METHOD /path?query` (the form of a missing-mock
+/// notice) and the host when it is not the page's. Asset-like paths on the page's own host (a
+/// `fetch('/data.json')`) are not API calls; nor are other resource types.
+fn unmocked_request(
+    method: &str,
+    url: &str,
+    kind: Option<&ResourceType>,
+    page_url: &str,
+) -> Option<(String, Option<String>)> {
+    if !matches!(kind, Some(ResourceType::Fetch | ResourceType::Xhr)) {
+        return None;
+    }
+    let (host, target) = split_url(url)?;
+    let own = split_url(page_url).is_some_and(|(page_host, _)| page_host == host);
+    let path = target.split('?').next().unwrap_or(&target);
+    if own && has_extension(path) {
+        return None;
+    }
+    Some((
+        format!("{method} {target}"),
+        (!own).then(|| host.to_owned()),
+    ))
+}
+
+/// Host and `/path?query` of an absolute http(s) URL.
+fn split_url(url: &str) -> Option<(&str, String)> {
+    let rest = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))?;
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (host, tail) = rest.split_at(end);
+    let tail = tail.split('#').next().unwrap_or(tail);
+    let target = if tail.starts_with('/') {
+        tail.to_owned()
+    } else {
+        format!("/{tail}")
+    };
+    Some((host, target))
+}
+
+/// Whether the last path segment ends in `.word`, like the frame's own asset test.
+fn has_extension(path: &str) -> bool {
+    let last = path.rsplit('/').next().unwrap_or("");
+    last.rsplit_once('.').is_some_and(|(_, ext)| {
+        !ext.is_empty() && ext.chars().all(|c| c.is_alphanumeric() || c == '_')
+    })
+}
+
+/// Turns the requests that reached the network into issues, once each, except those the frame
+/// already reported as a missing mock (the same request seen from both sides).
+fn report_unmocked(watch: &mut Watch) {
+    let reported: HashSet<String> = watch
+        .issues
+        .iter()
+        .filter(|(source, ..)| *source == Source::Console)
+        .filter_map(|(.., issue)| issue.strip_prefix("[charet] missing mock "))
+        .map(str::to_owned)
+        .collect();
+    let mut seen = HashSet::new();
+    for (at, key, host) in std::mem::take(&mut watch.unmocked) {
+        if reported.contains(&key) || !seen.insert(key.clone()) {
+            continue;
+        }
+        let to = host.map(|h| format!(" to {h}")).unwrap_or_default();
+        let issue = format!(
+            "[charet] unmocked request reached the network{to}: {key} (an API client made before \
+             the mocks started keeps the real fetch; load the app inside renderScreen)"
+        );
+        watch.issues.push((Source::Network, at, first(&issue, 300)));
+    }
+}
+
 fn push(watch: &Shared, source: Source, at: f64, issue: String) {
     lock(watch).issues.push((source, at, issue));
 }
@@ -544,6 +635,98 @@ mod tests {
         assert_eq!(
             console_issue(true, "Failed to load resource: net::ERR_CONNECTION_REFUSED"),
             Some("error: Failed to load resource: net::ERR_CONNECTION_REFUSED".into())
+        );
+    }
+
+    const PAGE: &str = "http://127.0.0.1:5281/p/demo/.charet/frame.html?screen=a";
+
+    #[test]
+    fn a_fetch_that_reached_the_network_is_unmocked() {
+        let fetch = Some(&ResourceType::Fetch);
+        assert_eq!(
+            unmocked_request(
+                "GET",
+                "http://127.0.0.1:5281/api/auth/me?x=1#h",
+                fetch,
+                PAGE
+            ),
+            Some(("GET /api/auth/me?x=1".into(), None))
+        );
+        assert_eq!(
+            unmocked_request(
+                "POST",
+                "http://127.0.0.1:5281",
+                Some(&ResourceType::Xhr),
+                PAGE
+            ),
+            Some(("POST /".into(), None))
+        );
+        // Another host is named; its path alone is what a missing-mock notice would carry.
+        assert_eq!(
+            unmocked_request("GET", "https://api.example.com/v1/users", fetch, PAGE),
+            Some(("GET /v1/users".into(), Some("api.example.com".into())))
+        );
+    }
+
+    #[test]
+    fn assets_and_other_resource_types_are_not_api_calls() {
+        let fetch = Some(&ResourceType::Fetch);
+        // The page's own files, like the frame's asset rule.
+        assert_eq!(
+            unmocked_request("GET", "http://127.0.0.1:5281/data.json", fetch, PAGE),
+            None
+        );
+        // The same file name on another host is not the page's.
+        assert!(
+            unmocked_request("GET", "https://cdn.example.com/data.json", fetch, PAGE).is_some()
+        );
+        for kind in [
+            ResourceType::Script,
+            ResourceType::Document,
+            ResourceType::Image,
+        ] {
+            assert_eq!(
+                unmocked_request("GET", "http://127.0.0.1:5281/api/x", Some(&kind), PAGE),
+                None
+            );
+        }
+        assert_eq!(
+            unmocked_request("GET", "http://127.0.0.1:5281/api/x", None, PAGE),
+            None
+        );
+        assert_eq!(
+            unmocked_request("GET", "data:text/plain,hi", fetch, PAGE),
+            None
+        );
+        assert_eq!(
+            unmocked_request("GET", "blob:http://127.0.0.1:5281/abc", fetch, PAGE),
+            None
+        );
+    }
+
+    #[test]
+    fn a_missing_mock_is_not_reported_twice() {
+        let mut watch = Watch::default();
+        watch.issues.push((
+            Source::Console,
+            1.0,
+            "[charet] missing mock GET /api/y".into(),
+        ));
+        watch.unmocked.push((2.0, "GET /api/y".into(), None));
+        watch.unmocked.push((3.0, "GET /api/auth/me".into(), None));
+        watch.unmocked.push((4.0, "GET /api/auth/me".into(), None));
+        report_unmocked(&mut watch);
+        let issues: Vec<&str> = watch
+            .issues
+            .iter()
+            .map(|(.., issue)| issue.as_str())
+            .collect();
+        assert_eq!(issues.len(), 2, "{issues:?}");
+        assert_eq!(issues[0], "[charet] missing mock GET /api/y");
+        assert!(
+            issues[1]
+                .starts_with("[charet] unmocked request reached the network: GET /api/auth/me"),
+            "{issues:?}"
         );
     }
 }

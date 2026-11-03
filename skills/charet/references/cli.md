@@ -69,7 +69,7 @@ are in) and `--server <url>` (default: the checkout's server, else `CHARET_URL`,
 
 | Command | Does |
 |---|---|
-| `charet check [id…] [--theme light\|dark\|both]` | Opens pages, reports page errors, console errors, missing mocks. Nothing is stored. Exit 1 on problems |
+| `charet check [id…] [--theme light\|dark\|both]` | Opens pages, reports page errors, console errors, missing mocks and requests that reached the network instead of a mock. Nothing is stored. Exit 1 on problems. It does not judge how the page looks: a login page or an error screen is not a problem to it |
 | `charet capture [id…] [--theme …] [--force] [--out dir]` | Stores captures the web tool shows and re-anchors comment pins. Already captured at this commit = `unchanged` unless `--force`. `--out` saves `<id>.jpg` / `<id>.dark.jpg`. On a branch (a branch checkout, or `--rev b<n>`) with `--out`: only the pictures of that branch, nothing stored |
 
 No ids = every screen and story.

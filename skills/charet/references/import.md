@@ -138,6 +138,7 @@ checking: an unpushed fix is invisible to them. Later fixes: `charet push -m "�
 | Symptom | Cause · fix |
 |---|---|
 | `[charet] missing mock GET /api/…` | No handler: add one (screen `mocks` or project `mocks`) |
+| `[charet] unmocked request reached the network: …` | The app's API client skipped the mocks: import the app inside `renderScreen` (see `project.md`, frame.tsx), not at the top of `frame.tsx` |
 | Broken images or fonts on previews | Absolute paths into `public/` are rewritten only when written as string literals; build URLs from `import.meta.env.BASE_URL` otherwise |
 | Times differ from what people expect | Rendering uses the render service's time zone (`CHARET_TZ`); pin dates in mocks |
 | Hooks error / "Invalid hook call" | React installed twice: check `autoInstallPeers: false` and that `.charet/package.json` has no `react` |
