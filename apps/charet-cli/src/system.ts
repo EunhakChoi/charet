@@ -124,23 +124,15 @@ export async function setup(ctx: Context, assumeYes: boolean): Promise<number> {
     if (star) starRepository(ctx);
   }
 
+  // The skill is its own step (`charet skill install`); setup only says where it would help.
   const agents = detectAgents(ctx);
   if (agents.length === 0) {
     ctx.out(t("cli.setup.noAgents", {}, ctx.locale));
   } else {
-    // Agents that already have the skill (or see one from here) are told so and not asked.
-    const steps = skillPlan(ctx, agents, true);
-    reportSkill(ctx, steps);
-    const needed = steps.filter((step) => step.action === "install");
-    if (
-      needed.length > 0 &&
-      (assumeYes ||
-        (await yes(
-          ctx,
-          t("cli.setup.skill", { agents: needed.map((s) => s.agent).join(", ") }, ctx.locale),
-        )))
-    ) {
-      installSkill(ctx, needed);
+    const missing = skillPlan(ctx, agents).filter((step) => step.action === "install");
+    if (missing.length > 0) {
+      const names = missing.map((step) => step.agent).join(", ");
+      ctx.out(t("cli.setup.skillHint", { agents: names }, ctx.locale));
     }
   }
   ctx.out(t("cli.setup.next", {}, ctx.locale));
@@ -273,45 +265,26 @@ function detectAgents(ctx: Context): Agent[] {
   return found;
 }
 
-type SkillAction = "install" | "linked" | "upToDate" | "present";
+type SkillAction = "install" | "linked" | "upToDate";
 interface SkillStep {
   agent: Agent;
   target: string;
   action: SkillAction;
-  /** Where the skill is, for the notes (the target, or a project folder that has one). */
-  dir: string;
 }
 
 /**
- * What each agent needs: a copy, or nothing because the skill is already there: a link to this
- * repository, an identical copy, or (with `reuse`) a project-level skill the agent finds from the
- * working directory. A copy that differs is updated.
+ * What each agent's folder needs: a copy, or nothing because the skill is already there (a link to
+ * this repository, or an identical copy). A copy that differs is updated.
  */
-function skillPlan(ctx: Context, agents: Agent[], reuse: boolean): SkillStep[] {
+function skillPlan(ctx: Context, agents: Agent[]): SkillStep[] {
   return agents.map((agent) => {
     const target = skillTarget(ctx, agent);
-    const step = (action: SkillAction, dir = target): SkillStep => ({ agent, target, action, dir });
-    if (existsSync(target)) {
-      if (realpathSync(target) === realpathSync(SKILL_DIR)) return step("linked");
-      return sameSkill(SKILL_DIR, target) ? step("upToDate") : step("install");
+    if (!existsSync(target)) return { agent, target, action: "install" };
+    if (realpathSync(target) === realpathSync(SKILL_DIR)) {
+      return { agent, target, action: "linked" };
     }
-    const project = reuse ? projectSkill(ctx, agent) : undefined;
-    return project ? step("present", project) : step("install");
+    return { agent, target, action: sameSkill(SKILL_DIR, target) ? "upToDate" : "install" };
   });
-}
-
-/** A charet skill in a project folder above the working directory: `.claude/skills` is read by
- * Claude, `.agents/skills` by Codex. */
-function projectSkill(ctx: Context, agent: Agent): string | undefined {
-  const folder = agent === "claude" ? ".claude" : ".agents";
-  let dir = resolve(ctx.cwd);
-  for (;;) {
-    const candidate = join(dir, folder, "skills", "charet");
-    if (existsSync(join(candidate, "SKILL.md"))) return candidate;
-    const parent = dirname(dir);
-    if (parent === dir) return undefined;
-    dir = parent;
-  }
 }
 
 /** Every file of a skill folder by relative path; evals/ are the skill's own test prompts
@@ -336,8 +309,10 @@ function sameSkill(a: string, b: string): boolean {
 
 /** Says what is already in place; the steps to install are left to the caller. */
 function reportSkill(ctx: Context, steps: SkillStep[]): void {
-  for (const { agent, dir, action } of steps) {
-    if (action !== "install") ctx.out(t(`cli.skill.${action}`, { agent, dir }, ctx.locale));
+  for (const { agent, target, action } of steps) {
+    if (action !== "install") {
+      ctx.out(t(`cli.skill.${action}`, { agent, dir: target }, ctx.locale));
+    }
   }
 }
 
@@ -365,8 +340,7 @@ export function skill(
     ...(codex ? ["codex" as const] : []),
   ];
   const agents = chosen.length ? chosen : detectAgents(ctx);
-  // Asked for outright: only what is already in place is skipped, a project-level one is not.
-  const steps = skillPlan(ctx, agents.length ? agents : ["claude"], false);
+  const steps = skillPlan(ctx, agents.length ? agents : ["claude"]);
   reportSkill(ctx, steps);
   installSkill(
     ctx,

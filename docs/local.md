@@ -116,7 +116,8 @@ The CLI is not published yet; run it from the clone (Node.js 24+, pnpm 12):
 pnpm install
 alias charet="node $PWD/apps/charet-cli/src/main.ts"
 charet doctor                          # checks node, git, the server and its services
-charet setup                           # signs in as the owner, prints the admin link; offers the skill
+charet setup                           # signs in as the owner and prints the admin link
+charet skill install                   # gives Claude Code and Codex the charet skill
 charet init demo                       # a new project from the recommended template
 charet import ../my-app                # or an existing app (with the workspace packages it uses)
 ```

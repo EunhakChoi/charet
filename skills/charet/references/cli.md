@@ -8,12 +8,12 @@ are in) and `--server <url>` (default: the checkout's server, else `CHARET_URL`,
 
 | Command | Does |
 |---|---|
-| `charet setup [--yes]` | First-run guide: checks the server, signs the CLI in as the owner, installs this skill unless the agent already finds one (a link to the repo, an identical copy, or a project folder above here has it) |
+| `charet setup [--yes]` | First-run guide: checks the server and signs the CLI in as the owner. It does not install this skill (`charet skill install` does); it says when an agent could use it |
 | `charet login [--token t]` | Signs in to a team server with the token an admin handed over (asks for it without `--token`). Not needed in local mode |
 | `charet whoami` · `charet logout` | Who the CLI acts as · forget the saved token on this machine |
 | `charet doctor` | Checks node, git, the server, charet-workspace, charet-render, cookie separation (exit 1 on failure) |
 | `charet serve [--server-only]` | Runs charet-server with charet-workspace and charet-render |
-| `charet skill install [--claude] [--codex]` | Installs this skill for Claude Code (`~/.claude/skills/charet`) and / or Codex (`~/.codex/skills/charet`) |
+| `charet skill install [--claude] [--codex]` | Installs this skill for Claude Code (`~/.claude/skills/charet`) and / or Codex (`~/.codex/skills/charet`). A copy that is already current, or a link to the repo, is left as it is |
 
 ## Projects and versions
 
