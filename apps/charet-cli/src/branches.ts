@@ -13,6 +13,7 @@ import {
   emit,
   fail,
   mergeBranch,
+  returnToMain,
   say,
 } from "./commands.ts";
 
@@ -109,6 +110,7 @@ async function act(ctx: Context, project: string, action: Action, number: number
     emit(ctx, version, () =>
       say(ctx, "cli.merge.done", { number: String(number), version: String(version.number) }),
     );
+    await returnToMain(ctx, number, version.number);
     return;
   }
   const path = {
