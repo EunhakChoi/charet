@@ -1608,6 +1608,8 @@ pub struct FakeNet {
     refreshed_with: Mutex<Vec<String>>,
     /// Runs while an exchange is in flight (an admin acting meanwhile).
     during_exchange: Mutex<Option<Box<dyn Fn() + Send>>>,
+    /// Starting a device sign-in is refused with this message.
+    device_start_refused: Mutex<Option<String>>,
     polls: Mutex<u32>,
     device_starts: Mutex<u32>,
     refreshes: Mutex<u32>,
@@ -1641,6 +1643,11 @@ impl FakeNet {
     /// The access token the next refresh issues (default: the one issued at sign-in).
     pub fn next_refresh(&self, access_token: &str) {
         *self.refresh_with.lock().unwrap() = Some(access_token.into());
+    }
+
+    /// Starting a `ChatGPT` sign-in fails (the provider cannot be reached).
+    pub fn refuse_device_start(&self, message: &str) {
+        *self.device_start_refused.lock().unwrap() = Some(message.into());
     }
 
     /// The next refresh keeps the refresh token it was given (the answer has no new one).
@@ -1717,6 +1724,9 @@ impl crate::ProviderNet for FakeNet {
     }
 
     fn openai_device_start(&self) -> Result<crate::DeviceAuth, crate::ProviderError> {
+        if let Some(message) = self.device_start_refused.lock().unwrap().take() {
+            return Err(crate::ProviderError::Unavailable(message));
+        }
         // Every sign-in gets its own id, as the provider's do.
         let mut starts = self.device_starts.lock().unwrap();
         *starts += 1;
