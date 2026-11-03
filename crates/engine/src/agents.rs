@@ -21,6 +21,7 @@ use sha2::Sha256;
 
 use crate::members::{hash, hex, random_hex};
 use crate::policy::{Command, can};
+use crate::providers::Credential;
 use crate::{AgentRunner, Engine, EngineError, NewRun, RunUpdate, RunnerStart};
 
 const DEFAULT_AGENT: &str = "agent.default";
@@ -540,13 +541,22 @@ impl Engine {
                 &format!("branch {} is closed", run.branch),
             );
         }
-        let api_key = match run.agent {
-            AgentKind::Script => String::new(),
-            agent => match self.api_key(&agents.config, agent)? {
-                Some(key) => key,
-                None => {
-                    return self.end_with(run, RunState::Failed, "no API key for this agent");
+        let credential = match run.agent {
+            AgentKind::Script => Credential::default(),
+            agent => match self.run_credential(&agents.config, agent) {
+                Ok(Some(credential)) => credential,
+                Ok(None) => {
+                    return self.end_with(
+                        run,
+                        RunState::Failed,
+                        "no API key or sign-in for this agent",
+                    );
                 }
+                // A login that cannot be renewed ends the run with what to do about it.
+                Err(EngineError::Unavailable(message)) => {
+                    return self.end_with(run, RunState::Failed, &message);
+                }
+                Err(error) => return Err(error),
             },
         };
         let token = random_hex();
@@ -565,7 +575,8 @@ impl Engine {
             id: run.id,
             agent: run.agent,
             model: run.model.clone(),
-            api_key,
+            api_key: credential.api_key,
+            oauth: credential.login,
             project: run.project.clone(),
             branch: run.branch,
             token,
@@ -730,7 +741,8 @@ impl Engine {
                 };
                 Ok(AgentChoice {
                     agent,
-                    ready: key != "none",
+                    // A key, or an account signed in to the agent's provider.
+                    ready: self.agent_has_credential(config, agent)?,
                     key,
                     key_last4: last4,
                     model,
@@ -754,7 +766,7 @@ impl Engine {
             .map(|c| c.agent))
     }
 
-    fn api_key(
+    pub(crate) fn api_key(
         &self,
         config: &AgentConfig,
         agent: AgentKind,
@@ -766,14 +778,19 @@ impl Engine {
     }
 
     fn saved_key(&self, agent: AgentKind) -> Result<Option<String>, EngineError> {
-        match self.ports.settings.get(&key_key(agent))? {
+        self.saved_secret(&key_key(agent))
+    }
+
+    /// A secret kept in the settings, opened; `None` when nothing (or an empty value) is saved.
+    pub(crate) fn saved_secret(&self, setting: &str) -> Result<Option<String>, EngineError> {
+        match self.ports.settings.get(setting)? {
             Some(sealed) if !sealed.is_empty() => self.open(&sealed).map(Some),
             _ => Ok(None),
         }
     }
 
     /// Encrypts a secret for the settings table with a key derived from the server key.
-    fn seal(&self, secret: &str) -> Result<String, EngineError> {
+    pub(crate) fn seal(&self, secret: &str) -> Result<String, EngineError> {
         let cipher = self.secrets_cipher()?;
         let mut nonce = [0u8; 12];
         getrandom::fill(&mut nonce).expect("the OS has randomness");
@@ -783,7 +800,7 @@ impl Engine {
         Ok(format!("v1:{}:{}", hex(&nonce), hex(&sealed)))
     }
 
-    fn open(&self, sealed: &str) -> Result<String, EngineError> {
+    pub(crate) fn open(&self, sealed: &str) -> Result<String, EngineError> {
         let broken = || {
             EngineError::Unavailable(
                 "a saved API key cannot be read (the server key changed?); save it again".into(),
@@ -842,7 +859,7 @@ fn key_key(agent: AgentKind) -> String {
     format!("agent.key.{}", kind_name(agent))
 }
 
-fn last4(secret: &str) -> String {
+pub(crate) fn last4(secret: &str) -> String {
     let chars: Vec<char> = secret.chars().collect();
     chars[chars.len().saturating_sub(4)..].iter().collect()
 }

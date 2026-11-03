@@ -1207,6 +1207,121 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/agent/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every provider the web agent can run on, with its API key and sign-in state (admins) */
+        get: operations["listProviders"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/agent/providers/{id}/key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Saves the provider's API key after the provider accepted it (admins). Stored encrypted and never returned. */
+        put: operations["saveProviderKey"];
+        post?: never;
+        /** Removes the saved API key (admins). A key set in the server's environment stays. */
+        delete: operations["removeProviderKey"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/agent/providers/{id}/key/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Asks the provider whether this key works, without saving it (admins) */
+        post: operations["checkProviderKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/agent/providers/{id}/use": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Chooses whether the web agent uses the API key or the signed-in account for this provider (admins) */
+        put: operations["chooseProviderAuth"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/agent/providers/{id}/oauth": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        /** Where the sign-in stands. The page polls it while the sign-in window is open (admins). */
+        get: operations["getProviderSignIn"];
+        put?: never;
+        /** Starts a sign-in; the page opens the returned address in a new window (admins) */
+        post: operations["startProviderSignIn"];
+        /** Cancels a sign-in that is waiting, or signs the account out (admins) */
+        delete: operations["endProviderSignIn"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/agent/providers/{id}/oauth/code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Finishes a sign-in whose window shows a code to copy (`method` is `code`) (admins) */
+        post: operations["finishProviderSignIn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/costs": {
         parameters: {
             query?: never;
@@ -1878,6 +1993,60 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /** @enum {string} */
+        ProviderId: "anthropic" | "openai" | "google";
+        Provider: {
+            id: components["schemas"]["ProviderId"];
+            key: {
+                /**
+                 * @description Where the API key comes from, the server's environment, a saved setting, or nowhere
+                 * @enum {string}
+                 */
+                source: "env" | "settings" | "none";
+                /** @description Last characters of the key */
+                last4?: string;
+            };
+            /** @description Absent when the provider has no sign-in */
+            oauth?: components["schemas"]["OAuthStatus"];
+            /**
+             * @description What the web agent uses for this provider now (`none` when neither is set)
+             * @enum {string}
+             */
+            use: "key" | "oauth" | "none";
+        };
+        ProviderKeyInput: {
+            key: string;
+        };
+        KeyCheck: {
+            ok: boolean;
+            /**
+             * @description Why it does not work
+             * @enum {string}
+             */
+            reason?: "invalid" | "forbidden" | "rate_limited" | "unreachable";
+            /** @description One line for people */
+            message: string;
+            /** @description How many models the key can use */
+            models?: number;
+        };
+        OAuthStatus: {
+            /** @enum {string} */
+            state: "signed_out" | "waiting" | "signed_in" | "failed";
+            /**
+             * @description While waiting. `device`: open `url` and type `userCode` there; the server notices when it
+             *     is done. `code`: open `url`; the page it ends on shows a code to paste into `oauth/code`.
+             * @enum {string}
+             */
+            method?: "device" | "code";
+            /** @description The provider's sign-in page, to open in a new window (while waiting) */
+            url?: string;
+            /** @description The code to type at `url` (method `device`) */
+            userCode?: string;
+            /** @description Who is signed in (an email), when known */
+            account?: string;
+            /** @description Why the last sign-in failed */
+            error?: string;
+        };
         StartAgentRun: {
             prompt: string;
             /** @description What the person pointed at (screen, element, source), passed to the agent as given */
@@ -2039,6 +2208,7 @@ export interface components {
         };
     };
     parameters: {
+        ProviderId: components["schemas"]["ProviderId"];
         RunId: number;
         /** @description A user id */
         MemberId: string;
@@ -4114,6 +4284,238 @@ export interface operations {
             };
             400: components["responses"]["Invalid"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    listProviders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The providers */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        providers: components["schemas"]["Provider"][];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    saveProviderKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderKeyInput"];
+            };
+        };
+        responses: {
+            /** @description The provider now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Provider"];
+                };
+            };
+            400: components["responses"]["Invalid"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    removeProviderKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    checkProviderKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderKeyInput"];
+            };
+        };
+        responses: {
+            /** @description The answer (a key that does not work is still a 200; `ok` is false) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KeyCheck"];
+                };
+            };
+            400: components["responses"]["Invalid"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    chooseProviderAuth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    use: "key" | "oauth";
+                };
+            };
+        };
+        responses: {
+            /** @description The provider now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Provider"];
+                };
+            };
+            400: components["responses"]["Invalid"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getProviderSignIn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The sign-in now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthStatus"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    startProviderSignIn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Waiting for the person to finish in the new window */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthStatus"];
+                };
+            };
+            400: components["responses"]["Invalid"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    endProviderSignIn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Signed out */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    finishProviderSignIn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description What the provider's page shows (`code#state`), or the address it ended on */
+                    code: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The sign-in now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthStatus"];
+                };
+            };
+            400: components["responses"]["Invalid"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["Unavailable"];
         };
     };
     getAgentCosts: {

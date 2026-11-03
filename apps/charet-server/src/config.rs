@@ -64,7 +64,8 @@ pub struct AgentSetup {
     pub token: Option<String>,
     /// The agent door (`CHARET_AGENT_BIND`, default `127.0.0.1:5285`): only run tokens get in.
     pub bind: SocketAddr,
-    /// `CHARET_ANTHROPIC_API_KEY`, `CHARET_OPENAI_API_KEY` (or `_FILE`), by agent name.
+    /// `CHARET_ANTHROPIC_API_KEY`, `CHARET_OPENAI_API_KEY`, `CHARET_GOOGLE_API_KEY` (or `_FILE`), by
+    /// provider (`claude`, `codex`, `google`).
     pub keys: std::collections::HashMap<String, String>,
     /// `CHARET_AGENT_SCRIPT=true`: offer the scripted test agent.
     pub script: bool,
@@ -289,6 +290,7 @@ fn agent_setup(env: &impl Fn(&str) -> Option<String>) -> Result<Option<AgentSetu
     for (agent, name) in [
         ("claude", "CHARET_ANTHROPIC_API_KEY"),
         ("codex", "CHARET_OPENAI_API_KEY"),
+        ("google", "CHARET_GOOGLE_API_KEY"),
     ] {
         if let Some(key) = secret(env, name)? {
             keys.insert(agent.to_owned(), key);

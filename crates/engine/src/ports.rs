@@ -734,8 +734,10 @@ pub struct RunnerStart {
     pub id: u64,
     pub agent: charet_model::AgentKind,
     pub model: String,
-    /// The vendor key; empty for the script agent.
+    /// The vendor key; empty for the script agent and when `oauth` is set.
     pub api_key: String,
+    /// A subscription login to run on instead of a key (its access token, renewed before the run).
+    pub oauth: Option<crate::RunLogin>,
     pub project: String,
     pub branch: u32,
     /// The token the container uses at the server's agent door.

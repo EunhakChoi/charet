@@ -2,6 +2,7 @@
 
 mod config;
 mod lan;
+mod providers;
 mod secret;
 mod update;
 mod webhook;
@@ -17,6 +18,7 @@ use charet_store::GitStore;
 use charet_workspace_client::{AgentClient, WorkspaceClient};
 
 use crate::config::Config;
+use crate::providers::ProviderClient;
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -163,14 +165,16 @@ async fn run(config: Config, admin_token: bool) -> Result<(), String> {
 /// Turns the web agent on when `charet-agent` is configured.
 fn with_agents(engine: Engine, config: &Config) -> Engine {
     match &config.agent {
-        Some(agent) => engine.with_agents(
-            Arc::new(AgentClient::new(&agent.url, agent.token.clone())),
-            charet_engine::AgentConfig {
-                env_keys: agent.keys.clone(),
-                script: agent.script,
-                max_running: agent.max_running,
-            },
-        ),
+        Some(agent) => engine
+            .with_agents(
+                Arc::new(AgentClient::new(&agent.url, agent.token.clone())),
+                charet_engine::AgentConfig {
+                    env_keys: agent.keys.clone(),
+                    script: agent.script,
+                    max_running: agent.max_running,
+                },
+            )
+            .with_providers(Arc::new(ProviderClient::new())),
         None => engine,
     }
 }

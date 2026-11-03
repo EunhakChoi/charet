@@ -7,7 +7,9 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use charet_engine::{AgentRunner, RunnerEvent, RunnerProgress, RunnerStart, WorkspaceError};
+use charet_engine::{
+    AgentRunner, RunLogin, RunnerEvent, RunnerProgress, RunnerStart, WorkspaceError,
+};
 use charet_model::{MessageKind, RunState};
 use serde::{Deserialize, Serialize};
 use ureq::Agent;
@@ -96,6 +98,8 @@ struct WireStart<'a> {
     agent: charet_model::AgentKind,
     model: &'a str,
     api_key: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    oauth: Option<WireLogin<'a>>,
     project: &'a str,
     branch: u32,
     token: &'a str,
@@ -103,6 +107,41 @@ struct WireStart<'a> {
     context: &'a serde_json::Value,
     images: Vec<WireImage<'a>>,
     history: Vec<WireTurn<'a>>,
+}
+
+/// A subscription login in place of an API key (what `charet-agent` calls `RunOAuth`).
+#[derive(Serialize)]
+#[serde(
+    tag = "provider",
+    rename_all = "lowercase",
+    rename_all_fields = "camelCase"
+)]
+enum WireLogin<'a> {
+    Anthropic {
+        access_token: &'a str,
+    },
+    Openai {
+        access_token: &'a str,
+        id_token: &'a str,
+        account_id: &'a str,
+    },
+}
+
+impl<'a> From<&'a RunLogin> for WireLogin<'a> {
+    fn from(login: &'a RunLogin) -> Self {
+        match login {
+            RunLogin::Anthropic { access_token } => Self::Anthropic { access_token },
+            RunLogin::Openai {
+                access_token,
+                id_token,
+                account_id,
+            } => Self::Openai {
+                access_token,
+                id_token,
+                account_id,
+            },
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -162,34 +201,39 @@ fn parse_progress(body: &str) -> Result<RunnerProgress, WorkspaceError> {
     })
 }
 
+/// The body of `POST /v1/runs`.
+fn start_body(run: &RunnerStart) -> Result<serde_json::Value, WorkspaceError> {
+    let body = WireStart {
+        id: run.id,
+        agent: run.agent,
+        model: &run.model,
+        api_key: &run.api_key,
+        oauth: run.oauth.as_ref().map(WireLogin::from),
+        project: &run.project,
+        branch: run.branch,
+        token: &run.token,
+        prompt: &run.prompt,
+        context: &run.context,
+        images: run
+            .images
+            .iter()
+            .map(|i| WireImage {
+                media_type: &i.media_type,
+                data: STANDARD.encode(&i.data),
+            })
+            .collect(),
+        history: run
+            .history
+            .iter()
+            .map(|(role, text)| WireTurn { role, text })
+            .collect(),
+    };
+    serde_json::to_value(&body).map_err(|e| WorkspaceError::Failed(e.to_string()))
+}
+
 impl AgentRunner for AgentClient {
     fn start(&self, run: &RunnerStart) -> Result<(), WorkspaceError> {
-        let body = WireStart {
-            id: run.id,
-            agent: run.agent,
-            model: &run.model,
-            api_key: &run.api_key,
-            project: &run.project,
-            branch: run.branch,
-            token: &run.token,
-            prompt: &run.prompt,
-            context: &run.context,
-            images: run
-                .images
-                .iter()
-                .map(|i| WireImage {
-                    media_type: &i.media_type,
-                    data: STANDARD.encode(&i.data),
-                })
-                .collect(),
-            history: run
-                .history
-                .iter()
-                .map(|(role, text)| WireTurn { role, text })
-                .collect(),
-        };
-        let body =
-            serde_json::to_value(&body).map_err(|e| WorkspaceError::Failed(e.to_string()))?;
+        let body = start_body(run)?;
         match self.call("POST", "/v1/runs", Some(&body))? {
             (200..=202, _) => Ok(()),
             (status, body) => Err(failed(status, &body)),
@@ -236,6 +280,66 @@ mod tests {
             (3, Some(RunState::Done))
         );
         assert!(parse_progress(r#"{"events":[]}"#).is_err());
+    }
+
+    fn start(
+        agent: charet_model::AgentKind,
+        api_key: &str,
+        oauth: Option<RunLogin>,
+    ) -> RunnerStart {
+        RunnerStart {
+            id: 7,
+            agent,
+            model: String::new(),
+            api_key: api_key.into(),
+            oauth,
+            project: "shop".into(),
+            branch: 1,
+            token: "t".into(),
+            prompt: "go".into(),
+            context: serde_json::Value::Null,
+            images: Vec::new(),
+            history: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_run_carries_a_key_or_a_login_never_both() {
+        use charet_model::AgentKind;
+        let keyed = start_body(&start(AgentKind::Claude, "sk-1", None)).unwrap();
+        assert_eq!(keyed["apiKey"], "sk-1");
+        assert!(keyed.get("oauth").is_none(), "no login field with a key");
+
+        let claude = start_body(&start(
+            AgentKind::Claude,
+            "",
+            Some(RunLogin::Anthropic {
+                access_token: "at".into(),
+            }),
+        ))
+        .unwrap();
+        assert_eq!(claude["apiKey"], "");
+        assert_eq!(
+            claude["oauth"],
+            serde_json::json!({ "provider": "anthropic", "accessToken": "at" })
+        );
+
+        let codex = start_body(&start(
+            AgentKind::Codex,
+            "",
+            Some(RunLogin::Openai {
+                access_token: "at".into(),
+                id_token: "it".into(),
+                account_id: "acct".into(),
+            }),
+        ))
+        .unwrap();
+        assert_eq!(
+            codex["oauth"],
+            serde_json::json!({
+                "provider": "openai", "accessToken": "at", "idToken": "it", "accountId": "acct"
+            })
+        );
     }
 
     #[test]

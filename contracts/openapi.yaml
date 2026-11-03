@@ -1896,6 +1896,187 @@ paths:
           $ref: "#/components/responses/Invalid"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/admin/agent/providers:
+    get:
+      tags: [agent]
+      operationId: listProviders
+      summary: Every provider the web agent can run on, with its API key and sign-in state (admins)
+      responses:
+        "200":
+          description: The providers
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [providers]
+                properties:
+                  providers:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Provider"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/admin/agent/providers/{id}/key:
+    parameters:
+      - $ref: "#/components/parameters/ProviderId"
+    put:
+      tags: [agent]
+      operationId: saveProviderKey
+      summary: Saves the provider's API key after the provider accepted it (admins). Stored encrypted and never returned.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProviderKeyInput"
+      responses:
+        "200":
+          description: The provider now
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Provider"
+        "400":
+          $ref: "#/components/responses/Invalid"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    delete:
+      tags: [agent]
+      operationId: removeProviderKey
+      summary: Removes the saved API key (admins). A key set in the server's environment stays.
+      responses:
+        "204":
+          description: Removed
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/admin/agent/providers/{id}/key/check:
+    parameters:
+      - $ref: "#/components/parameters/ProviderId"
+    post:
+      tags: [agent]
+      operationId: checkProviderKey
+      summary: Asks the provider whether this key works, without saving it (admins)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProviderKeyInput"
+      responses:
+        "200":
+          description: The answer (a key that does not work is still a 200; `ok` is false)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KeyCheck"
+        "400":
+          $ref: "#/components/responses/Invalid"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/admin/agent/providers/{id}/use:
+    parameters:
+      - $ref: "#/components/parameters/ProviderId"
+    put:
+      tags: [agent]
+      operationId: chooseProviderAuth
+      summary: Chooses whether the web agent uses the API key or the signed-in account for this provider (admins)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [use]
+              additionalProperties: false
+              properties:
+                use:
+                  type: string
+                  enum: [key, oauth]
+      responses:
+        "200":
+          description: The provider now
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Provider"
+        "400":
+          $ref: "#/components/responses/Invalid"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/admin/agent/providers/{id}/oauth:
+    parameters:
+      - $ref: "#/components/parameters/ProviderId"
+    get:
+      tags: [agent]
+      operationId: getProviderSignIn
+      summary: Where the sign-in stands. The page polls it while the sign-in window is open (admins).
+      responses:
+        "200":
+          description: The sign-in now
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OAuthStatus"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [agent]
+      operationId: startProviderSignIn
+      summary: Starts a sign-in; the page opens the returned address in a new window (admins)
+      responses:
+        "200":
+          description: Waiting for the person to finish in the new window
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OAuthStatus"
+        "400":
+          $ref: "#/components/responses/Invalid"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    delete:
+      tags: [agent]
+      operationId: endProviderSignIn
+      summary: Cancels a sign-in that is waiting, or signs the account out (admins)
+      responses:
+        "204":
+          description: Signed out
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/admin/agent/providers/{id}/oauth/code:
+    parameters:
+      - $ref: "#/components/parameters/ProviderId"
+    post:
+      tags: [agent]
+      operationId: finishProviderSignIn
+      summary: Finishes a sign-in whose window shows a code to copy (`method` is `code`) (admins)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              additionalProperties: false
+              properties:
+                code:
+                  type: string
+                  description: What the provider's page shows (`code#state`), or the address it ended on
+      responses:
+        "200":
+          description: The sign-in now
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OAuthStatus"
+        "400":
+          $ref: "#/components/responses/Invalid"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /api/admin/costs:
     get:
       tags: [agent]
@@ -2032,6 +2213,12 @@ paths:
           $ref: "#/components/responses/NotFound"
 components:
   parameters:
+    ProviderId:
+      name: id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/ProviderId"
     RunId:
       name: id
       in: path
@@ -3254,6 +3441,82 @@ components:
           description: API key per agent; an empty string removes the saved one
           additionalProperties:
             type: string
+    ProviderId:
+      type: string
+      enum: [anthropic, openai, google]
+    Provider:
+      type: object
+      required: [id, key, use]
+      properties:
+        id:
+          $ref: "#/components/schemas/ProviderId"
+        key:
+          type: object
+          required: [source]
+          properties:
+            source:
+              type: string
+              enum: [env, settings, none]
+              description: Where the API key comes from, the server's environment, a saved setting, or nowhere
+            last4:
+              type: string
+              description: Last characters of the key
+        oauth:
+          $ref: "#/components/schemas/OAuthStatus"
+          description: Absent when the provider has no sign-in
+        use:
+          type: string
+          enum: [key, oauth, none]
+          description: What the web agent uses for this provider now (`none` when neither is set)
+    ProviderKeyInput:
+      type: object
+      required: [key]
+      additionalProperties: false
+      properties:
+        key:
+          type: string
+          maxLength: 500
+    KeyCheck:
+      type: object
+      required: [ok, message]
+      properties:
+        ok:
+          type: boolean
+        reason:
+          type: string
+          enum: [invalid, forbidden, rate_limited, unreachable]
+          description: Why it does not work
+        message:
+          type: string
+          description: One line for people
+        models:
+          type: integer
+          description: How many models the key can use
+    OAuthStatus:
+      type: object
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: [signed_out, waiting, signed_in, failed]
+        method:
+          type: string
+          enum: [device, code]
+          description: |
+            While waiting. `device`: open `url` and type `userCode` there; the server notices when it
+            is done. `code`: open `url`; the page it ends on shows a code to paste into `oauth/code`.
+        url:
+          type: string
+          description: The provider's sign-in page, to open in a new window (while waiting)
+        userCode:
+          type: string
+          description: The code to type at `url` (method `device`)
+        account:
+          type: string
+          description: Who is signed in (an email), when known
+        error:
+          type: string
+          description: Why the last sign-in failed
     StartAgentRun:
       type: object
       required: [prompt]
