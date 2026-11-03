@@ -194,7 +194,7 @@ impl ProviderNet for ProviderClient {
                 ],
             )
             .map_err(ProviderError::Unavailable)?;
-        parse_tokens(reply.status, &reply.body, Refresh::Required)
+        parse_tokens(reply.status, &reply.body)
     }
 
     fn openai_refresh(&self, refresh_token: &str) -> Result<Tokens, ProviderError> {
@@ -208,7 +208,7 @@ impl ProviderNet for ProviderClient {
                 ],
             )
             .map_err(ProviderError::Unavailable)?;
-        parse_tokens(reply.status, &reply.body, Refresh::Optional)
+        parse_tokens(reply.status, &reply.body)
     }
 
     fn anthropic_exchange(
@@ -231,7 +231,7 @@ impl ProviderNet for ProviderClient {
                 }),
             )
             .map_err(ProviderError::Unavailable)?;
-        parse_tokens(reply.status, &reply.body, Refresh::Required)
+        parse_tokens(reply.status, &reply.body)
     }
 
     fn anthropic_refresh(&self, refresh_token: &str) -> Result<Tokens, ProviderError> {
@@ -245,7 +245,7 @@ impl ProviderNet for ProviderClient {
                 }),
             )
             .map_err(ProviderError::Unavailable)?;
-        parse_tokens(reply.status, &reply.body, Refresh::Optional)
+        parse_tokens(reply.status, &reply.body)
     }
 }
 
@@ -300,18 +300,9 @@ fn key_check(provider: ProviderId, status: u16, body: &str) -> KeyCheck {
     }
 }
 
-/// Whether a token answer has to carry a refresh token.
-#[derive(Clone, Copy)]
-enum Refresh {
-    /// A new login: without one it could never be renewed.
-    Required,
-    /// A renewal: the provider may leave the refresh token as it was, and the answer then has none.
-    Optional,
-}
-
 /// What a token endpoint answered. An answer without a refresh token (a renewal that keeps the
-/// old one) gives an empty `refresh`.
-fn parse_tokens(status: u16, body: &str, refresh: Refresh) -> Result<Tokens, ProviderError> {
+/// old one) gives `refresh: None`; the engine decides whether that is acceptable.
+fn parse_tokens(status: u16, body: &str) -> Result<Tokens, ProviderError> {
     if !(200..300).contains(&status) {
         let message = format!("status {status}: {}", error_text(body));
         // The provider said no to this code or login; anything else is worth trying again.
@@ -329,13 +320,8 @@ fn parse_tokens(status: u16, body: &str, refresh: Refresh) -> Result<Tokens, Pro
             .filter(|t| !t.is_empty())
             .map(str::to_owned)
     };
-    let new_refresh = text("refresh_token");
-    let (Some(access), Some(refresh), Some(expires_in)) = (
+    let (Some(access), Some(expires_in)) = (
         text("access_token"),
-        match refresh {
-            Refresh::Required => new_refresh,
-            Refresh::Optional => Some(new_refresh.unwrap_or_default()),
-        },
         json.get("expires_in").and_then(Value::as_u64),
     ) else {
         return Err(ProviderError::Unavailable(
@@ -344,7 +330,7 @@ fn parse_tokens(status: u16, body: &str, refresh: Refresh) -> Result<Tokens, Pro
     };
     Ok(Tokens {
         access,
-        refresh,
+        refresh: text("refresh_token"),
         id_token: text("id_token"),
         expires_in,
     })
@@ -536,53 +522,43 @@ mod tests {
         let tokens = parse_tokens(
             200,
             r#"{"access_token":"a","refresh_token":"r","id_token":"i","expires_in":3600}"#,
-            Refresh::Required,
         )
         .unwrap();
         assert_eq!(
             (
                 tokens.access.as_str(),
-                tokens.refresh.as_str(),
+                tokens.refresh.as_deref(),
                 tokens.id_token.as_deref(),
                 tokens.expires_in
             ),
-            ("a", "r", Some("i"), 3600)
+            ("a", Some("r"), Some("i"), 3600)
         );
         assert!(matches!(
-            parse_tokens(400, r#"{"error":"invalid_grant","error_description":"used"}"#, Refresh::Required),
+            parse_tokens(400, r#"{"error":"invalid_grant","error_description":"used"}"#),
             Err(ProviderError::Rejected(m)) if m.contains("used")
         ));
         assert!(matches!(
-            parse_tokens(503, "down", Refresh::Required),
+            parse_tokens(503, "down"),
             Err(ProviderError::Unavailable(_))
         ));
         assert!(matches!(
-            parse_tokens(429, "slow", Refresh::Required),
+            parse_tokens(429, "slow"),
             Err(ProviderError::Unavailable(_))
         ));
         assert!(matches!(
-            parse_tokens(200, r#"{"access_token":"a"}"#, Refresh::Required),
+            parse_tokens(200, r#"{"access_token":"a"}"#),
             Err(ProviderError::Unavailable(_))
         ));
     }
 
     #[test]
-    fn a_renewal_may_leave_the_refresh_token_as_it_was() {
-        let answer = r#"{"access_token":"a2","expires_in":3600}"#;
-        let kept = parse_tokens(200, answer, Refresh::Optional).unwrap();
-        assert_eq!((kept.access.as_str(), kept.refresh.as_str()), ("a2", ""));
-        // A new login without one could never be renewed.
-        assert!(matches!(
-            parse_tokens(200, answer, Refresh::Required),
-            Err(ProviderError::Unavailable(_))
-        ));
+    fn an_answer_without_a_refresh_token_has_none() {
+        let tokens = parse_tokens(200, r#"{"access_token":"a2","expires_in":3600}"#).unwrap();
+        assert_eq!((tokens.access.as_str(), tokens.refresh), ("a2", None));
 
         let (url, _) = serve_once(200, r#"{"access_token":"a2","expires_in":3600}"#);
         let renewed = client(&url).anthropic_refresh("r1").unwrap();
-        assert_eq!(
-            (renewed.access.as_str(), renewed.refresh.as_str()),
-            ("a2", "")
-        );
+        assert_eq!(renewed.refresh, None);
     }
 
     #[test]

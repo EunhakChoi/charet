@@ -223,7 +223,8 @@ pub enum DevicePoll {
 #[derive(Clone, PartialEq, Eq)]
 pub struct Tokens {
     pub access: String,
-    pub refresh: String,
+    /// The new refresh token; `None` when the provider left it as it was (a renewal may).
+    pub refresh: Option<String>,
     pub id_token: Option<String>,
     pub expires_in: u64,
 }
@@ -313,6 +314,9 @@ enum Pending {
         started: u64,
         next_poll: u64,
         generation: u64,
+        /// The code has been given and is being exchanged for tokens: nothing else asks the
+        /// provider about this attempt until that is done (the code is used up by the exchange).
+        exchanging: bool,
     },
     Code {
         verifier: String,
@@ -333,12 +337,6 @@ pub(crate) struct Providers {
     /// the action waits for anything, so an attempt that finishes meanwhile is already out of date.
     latest: Arc<Mutex<HashMap<ProviderId, u64>>>,
     next_generation: Arc<AtomicU64>,
-}
-
-/// A sign-in action's place in line (see `Providers::reserve`).
-struct Reservation {
-    generation: u64,
-    previous: Option<u64>,
 }
 
 impl Providers {
@@ -363,6 +361,7 @@ impl Providers {
                     device,
                     started,
                     generation,
+                    exchanging: false,
                 })
             }
             ProviderId::Anthropic => Ok(Pending::Code {
@@ -376,30 +375,26 @@ impl Providers {
 
     /// Notes that a start or cancel was asked for: attempts of an earlier generation are not wanted
     /// from now on, even while this action still waits for the pending state.
-    fn reserve(&self, provider: ProviderId) -> Reservation {
+    fn reserve(&self, provider: ProviderId) -> u64 {
         let generation = self.next_generation.fetch_add(1, Ordering::SeqCst) + 1;
-        let previous = self
-            .latest
+        self.latest
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(provider, generation);
-        Reservation {
-            generation,
-            previous,
-        }
+        generation
     }
 
-    /// A start that failed gives its place back, so the attempt it meant to replace still counts.
-    fn release(&self, provider: ProviderId, reservation: &Reservation) {
-        let mut latest = self
-            .latest
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if latest.get(&provider) == Some(&reservation.generation) {
-            match reservation.previous {
-                Some(previous) => latest.insert(provider, previous),
-                None => latest.remove(&provider),
-            };
+    /// A start of this `generation` failed. If it is still the newest action, the attempt that was
+    /// waiting (if any) is the one that counts again, as if the start had never been asked for.
+    fn keep_waiting_attempt(&self, provider: ProviderId, generation: u64) {
+        let mut pending = self.pending();
+        if !self.is_latest(provider, generation) {
+            return;
+        }
+        if let Some(Pending::Device { generation: g, .. } | Pending::Code { generation: g, .. }) =
+            pending.get_mut(&provider)
+        {
+            *g = generation;
         }
     }
 
@@ -416,15 +411,21 @@ impl Providers {
         else {
             return false;
         };
-        *g == generation
-            && self
-                .latest
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .get(&provider)
-                == Some(&generation)
+        *g == generation && self.is_latest(provider, generation)
     }
 
+    /// Whether no start or cancel newer than this `generation` was asked for.
+    fn is_latest(&self, provider: ProviderId, generation: u64) -> bool {
+        self.latest
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&provider)
+            == Some(&generation)
+    }
+
+    /// The pending sign-ins. Lock order: `pending`, then `latest` (never the other way round).
+    /// A decision about an attempt and its effect (storing a login) happen under this one lock, so
+    /// that they cannot be separated by a start or a cancel.
     fn pending(&self) -> std::sync::MutexGuard<'_, HashMap<ProviderId, Pending>> {
         self.pending
             .lock()
@@ -520,11 +521,21 @@ impl Engine {
         let providers = self.provider_net()?;
         // Noted before the provider is asked anything, so an attempt that finishes meanwhile is not
         // accepted under the new one.
-        let reservation = providers.reserve(provider);
+        let generation = providers.reserve(provider);
         let pending = providers
-            .new_attempt(provider, reservation.generation)
-            .inspect_err(|_| providers.release(provider, &reservation))?;
-        providers.pending().insert(provider, pending);
+            .new_attempt(provider, generation)
+            .inspect_err(|_| providers.keep_waiting_attempt(provider, generation))?;
+        {
+            let mut state = providers.pending();
+            // A newer start or a cancel was asked for while the provider answered: this attempt
+            // must not overwrite what they made (or bring back what a cancel removed).
+            if !providers.is_latest(provider, generation) {
+                return Err(EngineError::Invalid(
+                    "the sign-in was cancelled or restarted while it started; try again".into(),
+                ));
+            }
+            state.insert(provider, pending);
+        }
         self.sign_in_view(provider)
     }
 
@@ -618,6 +629,13 @@ impl Engine {
                 return Ok(());
             }
         }
+        // A renewal in flight would store its tokens after this and bring the login back.
+        let _renewal_done = self.providers.as_ref().map(|providers| {
+            providers
+                .renewing
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        });
         self.ports.settings.set(&provider.login_setting(), "")?;
         self.ports.settings.set(&provider.use_setting(), "")?;
         Ok(())
@@ -785,6 +803,9 @@ impl Engine {
             let mut pending = providers.pending();
             let at = now();
             let too_long = match pending.get(&provider) {
+                Some(Pending::Device {
+                    exchanging: true, ..
+                }) => return,
                 Some(Pending::Device { started, .. } | Pending::Code { started, .. }) => {
                     at > started + LOGIN_TIMEOUT
                 }
@@ -802,6 +823,7 @@ impl Engine {
                     device,
                     next_poll,
                     generation,
+                    exchanging: false,
                     ..
                 }) if at >= *next_poll => {
                     // Claim this look: a second page asking meanwhile waits for the next one.
@@ -815,6 +837,16 @@ impl Engine {
         let mut pending = providers.pending();
         // Cancelled or restarted while the provider was asked: leave the newer state alone.
         if !providers.wanted(&pending, provider, generation) {
+            return;
+        }
+        // Another look already got the code and is exchanging it: its outcome is the one that counts.
+        if matches!(
+            pending.get(&provider),
+            Some(Pending::Device {
+                exchanging: true,
+                ..
+            })
+        ) {
             return;
         }
         match outcome {
@@ -836,6 +868,9 @@ impl Engine {
                 authorization_code,
                 code_verifier,
             }) => {
+                if let Some(Pending::Device { exchanging, .. }) = pending.get_mut(&provider) {
+                    *exchanging = true;
+                }
                 drop(pending);
                 let exchanged = providers
                     .net
@@ -886,16 +921,17 @@ impl Engine {
                 String::new(),
             )
         };
-        let refresh = if tokens.refresh.is_empty() {
-            old.map(|o| o.refresh.clone()).unwrap_or_default()
-        } else {
-            tokens.refresh.clone()
-        };
-        if refresh.is_empty() {
+        // The one place that decides: a login always has a refresh token, a new one or the old one.
+        let Some(refresh) = tokens
+            .refresh
+            .clone()
+            .filter(|r| !r.is_empty())
+            .or_else(|| old.map(|o| o.refresh.clone()))
+        else {
             return Err(EngineError::Unavailable(
                 "the provider gave no refresh token, so the login could not be renewed".into(),
             ));
-        }
+        };
         let login = Login {
             access: tokens.access.clone(),
             refresh,
@@ -928,11 +964,11 @@ impl Engine {
         config: &AgentConfig,
         provider: ProviderId,
     ) -> Result<Option<Login>, EngineError> {
-        let renew_within = config.run_limit_secs() + RENEW_MARGIN;
+        let renew_within = config.run_limit_secs().saturating_add(RENEW_MARGIN);
         let Some(login) = self.stored_login(provider)? else {
             return Ok(None);
         };
-        if login.expires > now() + renew_within {
+        if login.expires > now().saturating_add(renew_within) {
             return Ok(Some(login));
         }
         let providers = self.provider_net()?;
@@ -944,7 +980,7 @@ impl Engine {
         let Some(login) = self.stored_login(provider)? else {
             return Ok(None);
         };
-        if login.expires > now() + renew_within {
+        if login.expires > now().saturating_add(renew_within) {
             return Ok(Some(login));
         }
         let renewed = match provider {
@@ -1452,7 +1488,7 @@ mod tests {
         let (engine, _, _, _) = setup();
         let tokens = Tokens {
             access: chatgpt_token("acct-1"),
-            refresh: String::new(),
+            refresh: None,
             id_token: None,
             expires_in: 3600,
         };
@@ -1583,6 +1619,14 @@ mod tests {
         age_login(&engine, ProviderId::Openai, 20 * 60);
         assert_eq!(credential(&tiny), 1, "no refresh: it outlasts the run");
         assert_eq!(credential(&short), 2);
+
+        // A limit too large to count (the agent service accepts any number) cannot overflow.
+        let huge = AgentConfig {
+            run_minutes: u64::MAX,
+            ..AgentConfig::default()
+        };
+        assert_eq!(huge.run_limit_secs(), u64::MAX);
+        assert_eq!(credential(&huge), 3, "it only means: always renew");
     }
 
     #[test]
@@ -1632,6 +1676,143 @@ mod tests {
                 .map(|_| ()),
             None
         );
+    }
+
+    #[test]
+    fn a_start_that_answers_after_a_newer_start_or_a_cancel_does_not_overwrite_them() {
+        let (engine, fakes, admin, _) = setup();
+
+        // Two admins start a ChatGPT sign-in at once; the first one's answer comes back last.
+        let second = engine.clone();
+        let who = admin.clone();
+        fakes.net.during_device_start(move || {
+            let newer = second
+                .start_provider_sign_in(&who, ProviderId::Openai)
+                .unwrap();
+            assert_eq!(newer.user_code.as_deref(), Some("ABCD-1235"));
+        });
+        let late = engine.start_provider_sign_in(&admin, ProviderId::Openai);
+        assert!(matches!(late, Err(EngineError::Invalid(_))), "{late:?}");
+        let shown = engine.provider_sign_in(&admin, ProviderId::Openai).unwrap();
+        assert_eq!(
+            (shown.state, shown.user_code.as_deref()),
+            (SignInState::Waiting, Some("ABCD-1235")),
+            "the newer start stays"
+        );
+
+        // A cancel comes in while the provider is asked for a code: nothing is brought back.
+        engine
+            .end_provider_sign_in(&admin, ProviderId::Openai)
+            .unwrap();
+        let cancel = engine.clone();
+        let who = admin.clone();
+        fakes.net.during_device_start(move || {
+            cancel
+                .end_provider_sign_in(&who, ProviderId::Openai)
+                .unwrap();
+        });
+        let late = engine.start_provider_sign_in(&admin, ProviderId::Openai);
+        assert!(matches!(late, Err(EngineError::Invalid(_))), "{late:?}");
+        let shown = engine.provider_sign_in(&admin, ProviderId::Openai).unwrap();
+        assert_eq!(
+            shown.state,
+            SignInState::SignedOut,
+            "the cancelled start is not recreated"
+        );
+    }
+
+    #[test]
+    fn restarts_that_fail_in_any_order_leave_the_waiting_attempt_wanted() {
+        let (engine, fakes, admin, _) = setup();
+        engine
+            .start_provider_sign_in(&admin, ProviderId::Openai)
+            .unwrap();
+        let providers = engine.providers.as_ref().unwrap();
+        // Two restarts are in flight; the one asked for first fails first.
+        let first = providers.reserve(ProviderId::Openai);
+        let second = providers.reserve(ProviderId::Openai);
+        providers.keep_waiting_attempt(ProviderId::Openai, first);
+        providers.keep_waiting_attempt(ProviderId::Openai, second);
+
+        fakes.net.finish_device(&chatgpt_token("acct-1"));
+        expire_poll_wait(&engine, ProviderId::Openai);
+        let state = engine
+            .provider_sign_in(&admin, ProviderId::Openai)
+            .unwrap()
+            .state;
+        assert_eq!(
+            state,
+            SignInState::SignedIn,
+            "the attempt that was waiting still counts"
+        );
+    }
+
+    #[test]
+    fn a_second_look_while_the_code_is_exchanged_does_not_spoil_the_sign_in() {
+        let (engine, fakes, admin, _) = setup();
+        engine
+            .start_provider_sign_in(&admin, ProviderId::Openai)
+            .unwrap();
+        fakes.net.finish_device(&chatgpt_token("acct-1"));
+        expire_poll_wait(&engine, ProviderId::Openai);
+        // The exchange is slow; another page asks meanwhile, and the code is used up by now.
+        let other_page = engine.clone();
+        let who = admin.clone();
+        let net = fakes.net.clone();
+        fakes.net.during_exchange(move || {
+            net.fail_device("the code was already used");
+            expire_poll_wait(&other_page, ProviderId::Openai);
+            let seen = other_page
+                .provider_sign_in(&who, ProviderId::Openai)
+                .unwrap();
+            assert_eq!(seen.state, SignInState::Waiting);
+        });
+        let state = engine
+            .provider_sign_in(&admin, ProviderId::Openai)
+            .unwrap()
+            .state;
+        assert_eq!(state, SignInState::SignedIn);
+        assert_eq!(
+            fakes.net.polls(),
+            1,
+            "nobody asked the provider again while exchanging"
+        );
+    }
+
+    #[test]
+    fn signing_out_waits_for_a_renewal_in_flight() {
+        let (engine, fakes, admin, _) = setup();
+        engine
+            .start_provider_sign_in(&admin, ProviderId::Openai)
+            .unwrap();
+        fakes.net.finish_device(&chatgpt_token("acct-1"));
+        expire_poll_wait(&engine, ProviderId::Openai);
+        engine.provider_sign_in(&admin, ProviderId::Openai).unwrap();
+        age_login(&engine, ProviderId::Openai, 10);
+
+        // While the renewal is in flight an admin signs out (on another thread, as a request would).
+        let signing_out = std::sync::Arc::new(Mutex::new(None));
+        let (out, who, handle) = (engine.clone(), admin.clone(), signing_out.clone());
+        fakes.net.during_refresh(move || {
+            let (out, who) = (out.clone(), who.clone());
+            *handle.lock().unwrap() = Some(std::thread::spawn(move || {
+                out.end_provider_sign_in(&who, ProviderId::Openai).unwrap();
+            }));
+            std::thread::sleep(std::time::Duration::from_millis(150));
+        });
+        let _ = engine.run_credential(&engine.agent_config(), AgentKind::Codex);
+        signing_out.lock().unwrap().take().unwrap().join().unwrap();
+
+        // The renewal's tokens were not stored after the sign-out wiped the login.
+        assert_eq!(
+            engine.stored_login(ProviderId::Openai).unwrap().map(|_| ()),
+            None
+        );
+        let state = engine
+            .provider_sign_in(&admin, ProviderId::Openai)
+            .unwrap()
+            .state;
+        assert_eq!(state, SignInState::SignedOut);
     }
 
     #[test]

@@ -286,6 +286,7 @@ function SignInRow({ provider, oauth }: { provider: Provider; oauth: OAuthStatus
   };
   // The sign-in under way keeps its code: the same page opens again, not a new sign-in.
   const reopen = () => {
+    setProblem(undefined);
     if (!oauth.url) return;
     const win = window.open(oauth.url, "charet-sign-in", "popup,width=520,height=720");
     if (win) popup.current = win;

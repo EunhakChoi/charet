@@ -31,6 +31,10 @@ const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
 /// Earlier turns handed to a run as context.
 const HISTORY: usize = 20;
 
+/// The longest a run may take unless told otherwise, in minutes (`charet-agent`'s default too:
+/// `apps/charet-agent/src/config.ts`).
+pub const DEFAULT_RUN_MINUTES: u64 = 30;
+
 /// How the server runs agents (set at start).
 #[derive(Clone)]
 pub struct AgentConfig {
@@ -53,7 +57,7 @@ impl Default for AgentConfig {
             env_keys: HashMap::new(),
             script: false,
             max_running: 0,
-            run_minutes: 30,
+            run_minutes: DEFAULT_RUN_MINUTES,
         }
     }
 }
@@ -61,7 +65,7 @@ impl Default for AgentConfig {
 impl AgentConfig {
     /// The longest a run may take, in seconds.
     pub(crate) fn run_limit_secs(&self) -> u64 {
-        self.run_minutes * 60
+        self.run_minutes.saturating_mul(60)
     }
 }
 

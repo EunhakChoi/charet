@@ -1608,6 +1608,10 @@ pub struct FakeNet {
     refreshed_with: Mutex<Vec<String>>,
     /// Runs while an exchange is in flight (an admin acting meanwhile).
     during_exchange: Mutex<Option<Box<dyn Fn() + Send>>>,
+    /// Runs while a device sign-in is being started.
+    during_device_start: Mutex<Option<Box<dyn Fn() + Send>>>,
+    /// Runs while a renewal is in flight.
+    during_refresh: Mutex<Option<Box<dyn Fn() + Send>>>,
     /// Starting a device sign-in is refused with this message.
     device_start_refused: Mutex<Option<String>>,
     polls: Mutex<u32>,
@@ -1665,6 +1669,16 @@ impl FakeNet {
         *self.during_exchange.lock().unwrap() = Some(Box::new(act));
     }
 
+    /// `act` runs while the next `ChatGPT` sign-in is being started, as if an admin did it just then.
+    pub fn during_device_start(&self, act: impl Fn() + Send + 'static) {
+        *self.during_device_start.lock().unwrap() = Some(Box::new(act));
+    }
+
+    /// `act` runs while the next renewal is in flight, as if an admin did it just then.
+    pub fn during_refresh(&self, act: impl Fn() + Send + 'static) {
+        *self.during_refresh.lock().unwrap() = Some(Box::new(act));
+    }
+
     fn exchange_in_flight(&self) {
         if let Some(act) = self.during_exchange.lock().unwrap().take() {
             act();
@@ -1689,11 +1703,11 @@ impl FakeNet {
         self.exchanges.lock().unwrap().clone()
     }
 
-    fn tokens(access: String, refresh: &str, id_token: bool) -> crate::Tokens {
+    fn tokens(access: String, refresh: Option<&str>, id_token: bool) -> crate::Tokens {
         crate::Tokens {
             id_token: id_token.then(|| access.clone()),
             access,
-            refresh: refresh.into(),
+            refresh: refresh.map(Into::into),
             expires_in: 3600,
         }
     }
@@ -1727,12 +1741,19 @@ impl crate::ProviderNet for FakeNet {
         if let Some(message) = self.device_start_refused.lock().unwrap().take() {
             return Err(crate::ProviderError::Unavailable(message));
         }
-        // Every sign-in gets its own id, as the provider's do.
-        let mut starts = self.device_starts.lock().unwrap();
-        *starts += 1;
+        // Every sign-in gets its own id and code, as the provider's do.
+        let number = {
+            let mut starts = self.device_starts.lock().unwrap();
+            *starts += 1;
+            *starts
+        };
+        let during = self.during_device_start.lock().unwrap().take();
+        if let Some(act) = during {
+            act();
+        }
         Ok(crate::DeviceAuth {
-            device_auth_id: format!("dev-{starts}"),
-            user_code: "ABCD-1234".into(),
+            device_auth_id: format!("dev-{number}"),
+            user_code: format!("ABCD-{}", 1233 + number),
             interval_secs: 30,
         })
     }
@@ -1770,7 +1791,7 @@ impl crate::ProviderNet for FakeNet {
         self.exchange_in_flight();
         Ok(Self::tokens(
             self.issued.lock().unwrap().clone(),
-            "refresh-1",
+            Some("refresh-1"),
             true,
         ))
     }
@@ -1781,6 +1802,10 @@ impl crate::ProviderNet for FakeNet {
             .lock()
             .unwrap()
             .push(refresh_token.into());
+        let during = self.during_refresh.lock().unwrap().take();
+        if let Some(act) = during {
+            act();
+        }
         if let Some(message) = self.refresh_refused.lock().unwrap().clone() {
             return Err(crate::ProviderError::Rejected(message));
         }
@@ -1791,11 +1816,7 @@ impl crate::ProviderNet for FakeNet {
             .clone()
             .unwrap_or_else(|| self.issued.lock().unwrap().clone());
         let keep = std::mem::take(&mut *self.keep_refresh_token.lock().unwrap());
-        Ok(Self::tokens(
-            access,
-            if keep { "" } else { "refresh-2" },
-            true,
-        ))
+        Ok(Self::tokens(access, (!keep).then_some("refresh-2"), true))
     }
 
     fn anthropic_exchange(
@@ -1813,7 +1834,11 @@ impl crate::ProviderNet for FakeNet {
             .unwrap()
             .push((code.into(), verifier.into()));
         self.exchange_in_flight();
-        Ok(Self::tokens("sk-ant-oat-1".into(), "refresh-1", false))
+        Ok(Self::tokens(
+            "sk-ant-oat-1".into(),
+            Some("refresh-1"),
+            false,
+        ))
     }
 
     fn anthropic_refresh(
@@ -1824,6 +1849,10 @@ impl crate::ProviderNet for FakeNet {
         if let Some(message) = self.refresh_refused.lock().unwrap().clone() {
             return Err(crate::ProviderError::Rejected(message));
         }
-        Ok(Self::tokens("sk-ant-oat-2".into(), "refresh-2", false))
+        Ok(Self::tokens(
+            "sk-ant-oat-2".into(),
+            Some("refresh-2"),
+            false,
+        ))
     }
 }

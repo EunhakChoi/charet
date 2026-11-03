@@ -280,12 +280,13 @@ fn remote_bind(
     Ok(Some(addr))
 }
 
-/// A run limit as whole minutes: `charet-agent` takes any positive number, so a fraction of a
-/// minute counts as the whole one. At most a day.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // 0 < n <= 1440 here
+/// A run limit as whole minutes. The rule is `charet-agent`'s own: any number above zero, so a
+/// fraction of a minute counts as the whole one. A huge value saturates (it only means "always
+/// renew"), so both services accept the same `.env`.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // n > 0; `as` saturates
 fn whole_minutes(text: &str) -> Option<u64> {
     let n: f64 = text.trim().parse().ok()?;
-    (n.is_finite() && n > 0.0 && n <= 1440.0).then(|| n.ceil() as u64)
+    (n > 0.0).then(|| n.ceil() as u64)
 }
 
 /// The web agent's settings; none without `CHARET_AGENT_URL`.
@@ -320,7 +321,7 @@ fn agent_setup(env: &impl Fn(&str) -> Option<String>) -> Result<Option<AgentSetu
         Some(text) => whole_minutes(&text).ok_or_else(|| {
             format!("CHARET_AGENT_TIMEOUT_MIN {text:?} is not a number of minutes")
         })?,
-        None => 30,
+        None => charet_engine::DEFAULT_RUN_MINUTES,
     };
     Ok(Some(AgentSetup {
         url: url.trim_end_matches('/').to_owned(),
@@ -533,6 +534,16 @@ mod tests {
             .map(|c| c.agent.unwrap().run_minutes)
         };
         assert_eq!(limit("90"), Ok(90));
+        assert_eq!(
+            limit("2880"),
+            Ok(2880),
+            "no cap of the server's own: charet-agent has none"
+        );
+        assert_eq!(
+            limit("1e30"),
+            Ok(u64::MAX),
+            "a huge value saturates instead of failing"
+        );
         assert_eq!(
             limit("0.5"),
             Ok(1),
