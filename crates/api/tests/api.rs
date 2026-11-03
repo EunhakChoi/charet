@@ -1758,3 +1758,205 @@ async fn a_run_s_container_works_on_its_branch_through_the_agent_door_only() {
     .await;
     assert_eq!(branch["status"], "open", "what it saved stays");
 }
+
+/// Providers that accept every key but one that starts with `bad`, and hand out a device code.
+struct StubNet;
+
+impl charet_engine::ProviderNet for StubNet {
+    fn check_key(&self, _: charet_engine::ProviderId, key: &str) -> charet_engine::KeyCheck {
+        let ok = !key.starts_with("bad");
+        charet_engine::KeyCheck {
+            ok,
+            reason: (!ok).then_some(charet_engine::KeyProblem::Invalid),
+            message: if ok { "The key works." } else { "Refused." }.into(),
+            models: ok.then_some(3),
+        }
+    }
+    fn openai_device_start(
+        &self,
+    ) -> Result<charet_engine::DeviceAuth, charet_engine::ProviderError> {
+        Ok(charet_engine::DeviceAuth {
+            device_auth_id: "dev".into(),
+            user_code: "WXYZ-0001".into(),
+            interval_secs: 5,
+        })
+    }
+    fn openai_device_poll(
+        &self,
+        _: &charet_engine::DeviceAuth,
+    ) -> Result<charet_engine::DevicePoll, charet_engine::ProviderError> {
+        Ok(charet_engine::DevicePoll::Pending)
+    }
+    fn openai_exchange(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+    ) -> Result<charet_engine::Tokens, charet_engine::ProviderError> {
+        Err(charet_engine::ProviderError::Unavailable("stub".into()))
+    }
+    fn openai_refresh(
+        &self,
+        _: &str,
+    ) -> Result<charet_engine::Tokens, charet_engine::ProviderError> {
+        Err(charet_engine::ProviderError::Unavailable("stub".into()))
+    }
+    fn anthropic_exchange(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &str,
+    ) -> Result<charet_engine::Tokens, charet_engine::ProviderError> {
+        Err(charet_engine::ProviderError::Unavailable("stub".into()))
+    }
+    fn anthropic_refresh(
+        &self,
+        _: &str,
+    ) -> Result<charet_engine::Tokens, charet_engine::ProviderError> {
+        Err(charet_engine::ProviderError::Unavailable("stub".into()))
+    }
+}
+
+async fn put(engine: Engine, path: &str, body: &Value) -> (StatusCode, Value) {
+    let request = Request::put(path)
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let (status, bytes, _) = send(engine, request).await;
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
+}
+
+async fn delete(engine: Engine, path: &str) -> StatusCode {
+    send(engine, Request::delete(path).body(Body::empty()).unwrap())
+        .await
+        .0
+}
+
+/// An engine with the agent and stub providers on.
+fn engine_with_providers() -> Engine {
+    engine(true)
+        .with_agents(
+            Arc::new(TokenRunner::default()),
+            charet_engine::AgentConfig {
+                max_running: 1,
+                ..charet_engine::AgentConfig::default()
+            },
+        )
+        .with_providers(Arc::new(StubNet))
+}
+
+#[tokio::test]
+async fn admins_check_and_save_provider_keys() {
+    let engine = engine_with_providers();
+    let base = "/api/admin/agent/providers";
+
+    let (status, body) = call(engine.clone(), base).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let ids: Vec<_> = body["providers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| (p["id"].as_str().unwrap(), p["use"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            ("anthropic", "none"),
+            ("openai", "none"),
+            ("google", "none")
+        ]
+    );
+    assert!(
+        body["providers"][2].get("oauth").is_none(),
+        "Google has no sign-in"
+    );
+
+    let (status, body) = call(engine.clone(), "/api/admin/agent/providers/nope/oauth").await;
+    assert_eq!(
+        (status, body["code"].as_str()),
+        (StatusCode::NOT_FOUND, Some("not_found"))
+    );
+
+    // A key the provider refuses answers 200 with `ok: false`, and cannot be saved.
+    let (status, check) = post(
+        engine.clone(),
+        &format!("{base}/openai/key/check"),
+        &json!({ "key": "bad-1234" }),
+    )
+    .await;
+    assert_eq!(
+        (status, check["ok"].clone(), check["reason"].as_str()),
+        (StatusCode::OK, json!(false), Some("invalid"))
+    );
+    let (status, _) = put(
+        engine.clone(),
+        &format!("{base}/openai/key"),
+        &json!({ "key": "bad-1234" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (status, saved) = put(
+        engine.clone(),
+        &format!("{base}/openai/key"),
+        &json!({ "key": "sk-good-wxyz" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(
+        (
+            saved["key"]["source"].as_str(),
+            saved["key"]["last4"].as_str(),
+            saved["use"].as_str()
+        ),
+        (Some("settings"), Some("wxyz"), Some("key"))
+    );
+    assert!(
+        !saved.to_string().contains("sk-good"),
+        "the key is never returned"
+    );
+    assert_eq!(
+        delete(engine.clone(), &format!("{base}/openai/key")).await,
+        StatusCode::NO_CONTENT
+    );
+}
+
+#[tokio::test]
+async fn admins_sign_in_to_providers() {
+    let engine = engine_with_providers();
+    let base = "/api/admin/agent/providers";
+    // A device sign-in shows the code to type; cancelling leaves nobody signed in.
+    let (status, waiting) = post(engine.clone(), &format!("{base}/openai/oauth"), &json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{waiting}");
+    assert_eq!(
+        (
+            waiting["state"].as_str(),
+            waiting["method"].as_str(),
+            waiting["userCode"].as_str()
+        ),
+        (Some("waiting"), Some("device"), Some("WXYZ-0001"))
+    );
+    assert_eq!(
+        delete(engine.clone(), &format!("{base}/openai/oauth")).await,
+        StatusCode::NO_CONTENT
+    );
+    let (_, now) = call(engine.clone(), &format!("{base}/openai/oauth")).await;
+    assert_eq!(now["state"], "signed_out");
+    let (status, _) = post(engine.clone(), &format!("{base}/google/oauth"), &json!({})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = post(
+        engine,
+        &format!("{base}/anthropic/oauth/code"),
+        &json!({ "code": "c#s" }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "no Claude sign-in is waiting for a code"
+    );
+}

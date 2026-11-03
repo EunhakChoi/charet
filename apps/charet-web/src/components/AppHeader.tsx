@@ -1,4 +1,4 @@
-import { KeyRound, LogOut, Moon, Sun, Users } from "lucide-react";
+import { KeyRound, LogOut, Moon, Settings, Sun } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { TokenForm } from "@/components/AuthGate";
@@ -34,9 +34,9 @@ export function AppHeader({ children, actions }: { children?: ReactNode; actions
         <Inbox />
         {who?.role === "admin" && (
           <Button variant="ghost" size="sm" asChild>
-            <Link to="/team">
-              <Users />
-              {t("web.team.nav")}
+            <Link to="/settings">
+              <Settings />
+              {t("web.settings.nav")}
             </Link>
           </Button>
         )}

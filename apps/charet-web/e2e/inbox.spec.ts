@@ -47,7 +47,8 @@ test("an admin adds a webhook and a test delivery arrives signed", async ({ page
   const url = `http://127.0.0.1:${(receiver.address() as AddressInfo).port}/hook`;
   try {
     await enter(page, adminToken());
-    await page.getByRole("link", { name: "Team" }).click();
+    await page.getByRole("link", { name: "Settings" }).click();
+    await page.getByRole("link", { name: "Webhooks" }).click();
     const hooks = page.getByRole("region", { name: "Webhooks" });
     await hooks.getByRole("textbox", { name: "Webhook address" }).fill(url);
     await hooks.getByRole("checkbox", { name: "comment.added" }).check();

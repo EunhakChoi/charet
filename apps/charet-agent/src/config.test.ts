@@ -7,10 +7,15 @@ test("defaults to docker runs on loopback", () => {
   assert.deepEqual(config.bind, { host: "127.0.0.1", port: 5290 });
   assert.equal(config.sandbox, "docker");
   assert.equal(config.doorUrl, "http://127.0.0.1:5285");
-  assert.deepEqual(config.allowHosts, ["api.anthropic.com", "api.openai.com"]);
+  assert.deepEqual(config.allowHosts, ["api.anthropic.com", "api.openai.com", "chatgpt.com"]);
   assert.equal(config.docker.image, "charet-agent-run:local");
   assert.equal(config.timeoutMs, 30 * 60_000);
   assert.deepEqual(config.prices, {});
+});
+
+test("CHARET_AGENT_ALLOW_HOSTS replaces the default hosts", () => {
+  const config = readConfig({ CHARET_AGENT_ALLOW_HOSTS: "Gateway.example, api.openai.com" });
+  assert.deepEqual(config.allowHosts, ["gateway.example", "api.openai.com"]);
 });
 
 test("needs a token off loopback and checks its input", () => {

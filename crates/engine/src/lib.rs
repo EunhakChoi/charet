@@ -15,6 +15,7 @@ pub mod policy;
 mod ports;
 mod preview;
 mod projects;
+mod providers;
 mod realtime;
 mod sharing;
 mod sheet;
@@ -48,6 +49,11 @@ pub use ports::{
 };
 pub use preview::{PREVIEW_PREFIX, Preview, PreviewSettings, preview_path};
 pub use projects::{Checkout, Import};
+pub use providers::{
+    ANTHROPIC_REDIRECT, DeviceAuth, DevicePoll, KeyCheck, KeyInfo, KeyProblem, OAuthStatus,
+    OPENAI_DEVICE_REDIRECT, OPENAI_DEVICE_URL, Provider, ProviderError, ProviderId, ProviderNet,
+    RunLogin, SignInMethod, SignInState, Tokens, percent_encode,
+};
 pub use sharing::{ShareMode, ShareRequest, Sharing, SharingStatus};
 pub use sheet::SheetItem;
 
@@ -88,6 +94,8 @@ pub struct Engine {
     merge_check: bool,
     /// The web agent, when a runner is configured.
     agents: Option<agents::Agents>,
+    /// Provider accounts (API keys and sign-ins), when the server can reach the providers.
+    providers: Option<providers::Providers>,
     /// One bookkeeping pass over runs at a time.
     agent_turn: Arc<std::sync::Mutex<()>>,
 }
@@ -111,6 +119,7 @@ impl Engine {
             secret: None,
             merge_check: true,
             agents: None,
+            providers: None,
             agent_turn: Arc::default(),
         }
     }
@@ -140,6 +149,14 @@ impl Engine {
     #[must_use]
     pub fn with_agents(mut self, runner: Arc<dyn AgentRunner>, config: AgentConfig) -> Self {
         self.agents = Some(agents::Agents { runner, config });
+        self
+    }
+
+    /// Lets admins check provider API keys and sign in to provider accounts: the calls to the
+    /// providers go through `net`.
+    #[must_use]
+    pub fn with_providers(mut self, net: Arc<dyn ProviderNet>) -> Self {
+        self.providers = Some(providers::Providers::new(net));
         self
     }
 

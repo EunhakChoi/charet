@@ -7,9 +7,10 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { RunSpec } from "../protocol.ts";
+import { secretsOf } from "../secrets.ts";
 import { claude } from "./claude.ts";
 import { codex } from "./codex.ts";
-import { type Agent, cli, emit, tool } from "./common.ts";
+import { type Agent, cli, emit, hide, keepSecret, tool } from "./common.ts";
 import { script } from "./script.ts";
 
 const AGENTS: Record<RunSpec["agent"], Agent> = { claude, codex, script };
@@ -17,6 +18,7 @@ const AGENTS: Record<RunSpec["agent"], Agent> = { claude, codex, script };
 const specPath = process.env.CHARET_RUN_SPEC ?? "/input/spec.json";
 const work = process.env.CHARET_RUN_WORK ?? "/work/project";
 const spec = JSON.parse(readFileSync(specPath, "utf8")) as RunSpec;
+keepSecret(secretsOf(spec));
 const abort = new AbortController();
 let canceled = false;
 process.once("SIGTERM", () => {
@@ -61,6 +63,8 @@ try {
 } catch (error) {
   if (checkedOut) await save();
   if (canceled) emit({ type: "result", state: "canceled" });
-  else emit({ type: "result", state: "failed", error: (error as Error).message.slice(0, 2000) });
+  else {
+    emit({ type: "result", state: "failed", error: hide((error as Error).message).slice(0, 2000) });
+  }
 }
 process.exit(0);

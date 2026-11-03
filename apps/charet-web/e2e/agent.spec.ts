@@ -65,10 +65,10 @@ test("asking the agent from a screen makes a draft the team can review", async (
 });
 
 test("admins see the web agent settings and its costs", async ({ page }) => {
-  await page.goto(`${base()}/team`);
-  const settings = page.getByRole("region", { name: "Web agent" });
+  await page.goto(`${base()}/settings/agent`);
+  const settings = page.getByRole("region", { name: "Default agent and models" });
   await expect(settings.getByText("On", { exact: true })).toBeVisible();
-  await expect(settings.getByRole("textbox", { name: "API key for claude" })).toBeVisible();
+  await expect(settings.getByRole("textbox", { name: "Model for claude" })).toBeVisible();
   const costs = page.getByRole("region", { name: "Agent costs" });
   await expect(costs.getByRole("cell", { name: "Admin" })).toBeVisible();
 });

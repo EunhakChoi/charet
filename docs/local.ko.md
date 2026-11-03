@@ -80,7 +80,7 @@ token 은 팀 화면에서 언제든 보기 · 복사 가능, **token 재발급*
 `localhost:5280` 포함 모든 주소에서 같은 규칙. 소유자 (*소유자* 표시) 는 첫 관리자이며 삭제 · 강등 불가.
 
 다른 기기의 접속은 두 번째 port 인 **원격 문** (`127.0.0.1:5284`, `CHARET_REMOTE_BIND`) 으로 받음.
-**팀 › 공유** 에서 접속 방식 선택:
+**설정 › 접근** (공유) 에서 접속 방식 선택:
 
 - **Tailscale 사설망** — 같은 tailnet 사람만 (Tailscale, 또는 Headscale 은 tailnet 안 HTTP).
   charet 가 `tailscale serve` 실행 후 기기 이름 표시.

@@ -25,6 +25,7 @@ pub struct Fakes {
     pub sender: Arc<MemorySender>,
     pub agents: Arc<MemoryAgents>,
     pub runner: Arc<FakeRunner>,
+    pub net: Arc<FakeNet>,
 }
 
 pub fn engine() -> Engine {
@@ -52,14 +53,16 @@ pub fn engine_with_fakes() -> (Engine, Fakes) {
 /// script agent.
 pub fn engine_with_agents() -> (Engine, Fakes) {
     let fakes = fakes();
-    let engine = engine_with(&fakes).with_agents(
-        fakes.runner.clone(),
-        crate::AgentConfig {
-            env_keys: HashMap::from([("claude".to_owned(), "sk-test-abcd".to_owned())]),
-            script: true,
-            max_running: 2,
-        },
-    );
+    let engine = engine_with(&fakes)
+        .with_agents(
+            fakes.runner.clone(),
+            crate::AgentConfig {
+                env_keys: HashMap::from([("claude".to_owned(), "sk-test-abcd".to_owned())]),
+                script: true,
+                max_running: 2,
+            },
+        )
+        .with_providers(fakes.net.clone());
     (engine, fakes)
 }
 
@@ -80,6 +83,7 @@ fn fakes() -> Fakes {
         sender: Arc::new(MemorySender::default()),
         agents: Arc::new(MemoryAgents::default()),
         runner: Arc::new(FakeRunner::default()),
+        net: Arc::new(FakeNet::default()),
     }
 }
 
@@ -1585,5 +1589,188 @@ impl crate::AgentRunner for FakeRunner {
             return Err(WorkspaceError::Unavailable("down".into()));
         }
         Ok(())
+    }
+}
+
+/// The providers, steered by tests: which keys they refuse, whether a person finished the device
+/// sign-in, what a refresh gives.
+#[derive(Default)]
+pub struct FakeNet {
+    refused_keys: Mutex<Vec<String>>,
+    device: Mutex<DevicePlan>,
+    issued: Mutex<String>,
+    refresh_with: Mutex<Option<String>>,
+    refresh_refused: Mutex<Option<String>>,
+    polls: Mutex<u32>,
+    refreshes: Mutex<u32>,
+    exchanges: Mutex<Vec<(String, String)>>,
+}
+
+#[derive(Default)]
+enum DevicePlan {
+    #[default]
+    Waiting,
+    Finished,
+    Failed(String),
+}
+
+impl FakeNet {
+    /// Keys that start with `prefix` are refused.
+    pub fn refuse_keys(&self, prefix: &str) {
+        self.refused_keys.lock().unwrap().push(prefix.into());
+    }
+
+    /// The person finished the device sign-in; the provider issues `access_token`.
+    pub fn finish_device(&self, access_token: &str) {
+        *self.device.lock().unwrap() = DevicePlan::Finished;
+        *self.issued.lock().unwrap() = access_token.into();
+    }
+
+    pub fn fail_device(&self, message: &str) {
+        *self.device.lock().unwrap() = DevicePlan::Failed(message.into());
+    }
+
+    /// The access token the next refresh issues (default: the one issued at sign-in).
+    pub fn next_refresh(&self, access_token: &str) {
+        *self.refresh_with.lock().unwrap() = Some(access_token.into());
+    }
+
+    pub fn refuse_refresh(&self, message: &str) {
+        *self.refresh_refused.lock().unwrap() = Some(message.into());
+    }
+
+    /// How many times the provider was asked whether the device sign-in was done.
+    pub fn polls(&self) -> u32 {
+        *self.polls.lock().unwrap()
+    }
+
+    pub fn refreshes(&self) -> u32 {
+        *self.refreshes.lock().unwrap()
+    }
+
+    /// (code, verifier) of each Claude code exchange.
+    pub fn anthropic_exchanges(&self) -> Vec<(String, String)> {
+        self.exchanges.lock().unwrap().clone()
+    }
+
+    fn tokens(access: String, refresh: &str, id_token: bool) -> crate::Tokens {
+        crate::Tokens {
+            id_token: id_token.then(|| access.clone()),
+            access,
+            refresh: refresh.into(),
+            expires_in: 3600,
+        }
+    }
+}
+
+impl crate::ProviderNet for FakeNet {
+    fn check_key(&self, _provider: crate::ProviderId, key: &str) -> crate::KeyCheck {
+        if self
+            .refused_keys
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|prefix| key.starts_with(prefix.as_str()))
+        {
+            return crate::KeyCheck {
+                ok: false,
+                reason: Some(crate::KeyProblem::Invalid),
+                message: "The provider refused this key.".into(),
+                models: None,
+            };
+        }
+        crate::KeyCheck {
+            ok: true,
+            reason: None,
+            message: "The key works.".into(),
+            models: Some(12),
+        }
+    }
+
+    fn openai_device_start(&self) -> Result<crate::DeviceAuth, crate::ProviderError> {
+        Ok(crate::DeviceAuth {
+            device_auth_id: "dev-1".into(),
+            user_code: "ABCD-1234".into(),
+            interval_secs: 30,
+        })
+    }
+
+    fn openai_device_poll(
+        &self,
+        _device: &crate::DeviceAuth,
+    ) -> Result<crate::DevicePoll, crate::ProviderError> {
+        *self.polls.lock().unwrap() += 1;
+        Ok(match &*self.device.lock().unwrap() {
+            DevicePlan::Waiting => crate::DevicePoll::Pending,
+            DevicePlan::Finished => crate::DevicePoll::Done {
+                authorization_code: "auth-code".into(),
+                code_verifier: "device-verifier".into(),
+            },
+            DevicePlan::Failed(message) => crate::DevicePoll::Failed(message.clone()),
+        })
+    }
+
+    fn openai_exchange(
+        &self,
+        code: &str,
+        verifier: &str,
+        redirect_uri: &str,
+    ) -> Result<crate::Tokens, crate::ProviderError> {
+        if (code, verifier, redirect_uri)
+            != (
+                "auth-code",
+                "device-verifier",
+                crate::OPENAI_DEVICE_REDIRECT,
+            )
+        {
+            return Err(crate::ProviderError::Rejected("wrong exchange".into()));
+        }
+        Ok(Self::tokens(
+            self.issued.lock().unwrap().clone(),
+            "refresh-1",
+            true,
+        ))
+    }
+
+    fn openai_refresh(&self, _refresh_token: &str) -> Result<crate::Tokens, crate::ProviderError> {
+        *self.refreshes.lock().unwrap() += 1;
+        if let Some(message) = self.refresh_refused.lock().unwrap().clone() {
+            return Err(crate::ProviderError::Rejected(message));
+        }
+        let access = self
+            .refresh_with
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| self.issued.lock().unwrap().clone());
+        Ok(Self::tokens(access, "refresh-2", true))
+    }
+
+    fn anthropic_exchange(
+        &self,
+        code: &str,
+        _state: &str,
+        verifier: &str,
+        redirect_uri: &str,
+    ) -> Result<crate::Tokens, crate::ProviderError> {
+        if redirect_uri != crate::ANTHROPIC_REDIRECT {
+            return Err(crate::ProviderError::Rejected("wrong redirect".into()));
+        }
+        self.exchanges
+            .lock()
+            .unwrap()
+            .push((code.into(), verifier.into()));
+        Ok(Self::tokens("sk-ant-oat-1".into(), "refresh-1", false))
+    }
+
+    fn anthropic_refresh(
+        &self,
+        _refresh_token: &str,
+    ) -> Result<crate::Tokens, crate::ProviderError> {
+        *self.refreshes.lock().unwrap() += 1;
+        if let Some(message) = self.refresh_refused.lock().unwrap().clone() {
+            return Err(crate::ProviderError::Rejected(message));
+        }
+        Ok(Self::tokens("sk-ant-oat-2".into(), "refresh-2", false))
     }
 }

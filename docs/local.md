@@ -86,7 +86,7 @@ The same rules hold on every address, `localhost:5280` included. The owner (mark
 first admin and cannot be removed or demoted.
 
 To let other machines in, charet has a second port, the **remote door** (`127.0.0.1:5284`,
-`CHARET_REMOTE_BIND`). In **Team › Sharing**, pick how others reach it:
+`CHARET_REMOTE_BIND`). In **Settings › Access** (Sharing), pick how others reach it:
 
 - **Tailscale network** — people on your tailnet (Tailscale, or Headscale over plain HTTP inside
   the tailnet). charet runs `tailscale serve` and shows the machine's name.

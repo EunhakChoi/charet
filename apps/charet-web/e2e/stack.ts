@@ -128,7 +128,7 @@ export default async function setup() {
       CHARET_RENDER_URL: `http://127.0.0.1:${render}`,
       CHARET_UPDATE_CHECK: "false",
     }),
-    // A third, local one that gets shared from its Team page (`sharing.spec.ts`).
+    // A third, local one that gets shared from its Settings page (`sharing.spec.ts`).
     start(join(root, "target/debug/charet-server"), [], {
       CHARET_HOME: join(home, "share"),
       CHARET_BIND: `127.0.0.1:${shareApi}`,

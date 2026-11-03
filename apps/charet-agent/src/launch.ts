@@ -26,7 +26,8 @@ export interface Launcher {
 
 const GRACE_SECS = 20;
 
-/** The spec file and images a run reads, with images as separate files. */
+/** The spec file and images a run reads, with images as separate files. The spec is where a run
+ * gets its credentials (`apiKey` or `oauth`): they are in no environment variable or argument. */
 export function inputFiles(run: RunStart): { path: string; data: Buffer }[] {
   const images = run.images.map((image, i) => ({
     mediaType: image.mediaType,
@@ -38,6 +39,7 @@ export function inputFiles(run: RunStart): { path: string; data: Buffer }[] {
     agent: run.agent,
     model: run.model,
     apiKey: run.apiKey,
+    ...(run.oauth ? { oauth: run.oauth } : {}),
     project: run.project,
     branch: run.branch,
     prompt: run.prompt,

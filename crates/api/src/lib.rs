@@ -15,6 +15,7 @@ mod members;
 mod notices;
 mod preview;
 mod projects;
+mod providers;
 mod sharing;
 mod socket;
 mod web;
@@ -119,6 +120,15 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("get", "/api/agent"),
     ("get", "/api/admin/agent"),
     ("put", "/api/admin/agent"),
+    ("get", "/api/admin/agent/providers"),
+    ("put", "/api/admin/agent/providers/{id}/key"),
+    ("delete", "/api/admin/agent/providers/{id}/key"),
+    ("post", "/api/admin/agent/providers/{id}/key/check"),
+    ("put", "/api/admin/agent/providers/{id}/use"),
+    ("get", "/api/admin/agent/providers/{id}/oauth"),
+    ("post", "/api/admin/agent/providers/{id}/oauth"),
+    ("delete", "/api/admin/agent/providers/{id}/oauth"),
+    ("post", "/api/admin/agent/providers/{id}/oauth/code"),
     ("get", "/api/admin/costs"),
     ("get", "/api/projects/{key}/agent-runs"),
     ("post", "/api/projects/{key}/agent-runs"),
@@ -192,6 +202,7 @@ fn routes() -> Router<Engine> {
         .merge(agents::routes())
         .merge(branches::routes())
         .merge(handoff::routes())
+        .merge(providers::routes())
         .route("/api/health", get(health))
         .route("/api/version", get(version))
         .route("/api/system", get(system))

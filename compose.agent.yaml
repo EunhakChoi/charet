@@ -6,7 +6,8 @@
 # Each run gets its own container (image charet-agent-run) on an internal network: it reaches only
 # the charet server's agent door (for its own branch) and the model APIs, through the agent service.
 # The agent service uses this machine's Docker socket to start those containers.
-# API keys: CHARET_ANTHROPIC_API_KEY / CHARET_OPENAI_API_KEY here, or in Settings › Web agent.
+# API keys: CHARET_ANTHROPIC_API_KEY / CHARET_OPENAI_API_KEY here, or in Settings › Web agent, where
+# a Claude / ChatGPT subscription can be signed in to instead.
 
 services:
   server:
@@ -20,6 +21,7 @@ services:
       CHARET_AGENT_BIND: 0.0.0.0:5285
       CHARET_ANTHROPIC_API_KEY: ${CHARET_ANTHROPIC_API_KEY:-}
       CHARET_OPENAI_API_KEY: ${CHARET_OPENAI_API_KEY:-}
+      CHARET_GOOGLE_API_KEY: ${CHARET_GOOGLE_API_KEY:-}
       CHARET_AGENT_MAX_RUNNING: ${CHARET_AGENT_MAX_RUNNING:-3}
       # Offers the scripted test agent (no model); for checks only.
       CHARET_AGENT_SCRIPT: ${CHARET_AGENT_SCRIPT:-false}

@@ -13,8 +13,8 @@ import { Flows } from "@/pages/Flows";
 import { ProjectLayout } from "@/pages/ProjectLayout";
 import { Projects } from "@/pages/Projects";
 import { Screens } from "@/pages/Screens";
+import { Settings } from "@/pages/Settings";
 import { Target } from "@/pages/Target";
-import { Team } from "@/pages/Team";
 import { Versions } from "@/pages/Versions";
 import "./index.css";
 
@@ -28,13 +28,15 @@ const router = createBrowserRouter([
     ),
   },
   {
-    path: "/team",
+    path: "/settings/:tab?",
     element: (
       <AuthGate>
-        <Team />
+        <Settings />
       </AuthGate>
     ),
   },
+  // The page was called Team before it held more than people.
+  { path: "/team", element: <Navigate to="/settings/members" replace /> },
   {
     path: "/p/:key",
     element: (

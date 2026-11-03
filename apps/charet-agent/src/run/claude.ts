@@ -1,6 +1,7 @@
 // Claude Agent SDK (in the run image only).
 
 import { readFileSync } from "node:fs";
+import type { RunSpec } from "../protocol.ts";
 import {
   type Agent,
   type AgentInput,
@@ -27,6 +28,33 @@ interface Block {
 }
 
 const SDK = "@anthropic-ai/claude-agent-sdk";
+
+/** Claude Code takes a credential from the first of these it finds, before `CLAUDE_CODE_OAUTH_TOKEN`. */
+const OUTRANKING_CREDENTIALS = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
+
+/**
+ * The environment Claude Code runs with, on top of `base`: the run's credential and the flags that
+ * keep it quiet. A run with a subscription login (`spec.oauth`) gets `CLAUDE_CODE_OAUTH_TOKEN`, and
+ * `base` loses the variables that would outrank it; else `ANTHROPIC_API_KEY` is the run's key.
+ */
+export function claudeEnv(
+  spec: RunSpec,
+  base: NodeJS.ProcessEnv,
+): Record<string, string | undefined> {
+  const quiet = {
+    DISABLE_TELEMETRY: "1",
+    DISABLE_ERROR_REPORTING: "1",
+    DISABLE_AUTOUPDATER: "1",
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+  };
+  if (!spec.oauth) return { ...base, ANTHROPIC_API_KEY: spec.apiKey, ...quiet };
+  if (spec.oauth.provider !== "anthropic") {
+    throw new Error(`a Claude run cannot use the ${spec.oauth.provider} login`);
+  }
+  const env = { ...base };
+  for (const name of OUTRANKING_CREDENTIALS) delete env[name];
+  return { ...env, CLAUDE_CODE_OAUTH_TOKEN: spec.oauth.accessToken, ...quiet };
+}
 
 export const claude: Agent = {
   async run({ spec, work, images, signal }: AgentInput): Promise<void> {
@@ -63,14 +91,7 @@ export const claude: Agent = {
         skills: "all",
         abortController,
         maxTurns: 100,
-        env: {
-          ...process.env,
-          ANTHROPIC_API_KEY: spec.apiKey,
-          DISABLE_TELEMETRY: "1",
-          DISABLE_ERROR_REPORTING: "1",
-          DISABLE_AUTOUPDATER: "1",
-          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-        },
+        env: claudeEnv(spec, process.env),
       },
     });
     for await (const message of messages) {

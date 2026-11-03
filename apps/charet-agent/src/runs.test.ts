@@ -19,7 +19,7 @@ const start: RunStart = {
 };
 
 /** A launcher the test drives: `emit` sends lines, `exit` ends the run. */
-function fake() {
+function fake(stderr = "boom") {
   let onLine: (line: string) => void = () => {};
   let exit: (code: number) => void = () => {};
   let stopped = 0;
@@ -33,7 +33,7 @@ function fake() {
         stop: () => {
           stopped++;
         },
-        stderr: () => "boom",
+        stderr: () => stderr,
       };
     },
     async cleanup() {},
@@ -84,6 +84,23 @@ test("a run that dies without a result failed; a canceled one was canceled", asy
   await tick();
   assert.equal(more.progress(1, 0)?.finished, "canceled");
   assert.equal(more.cancel(5), false);
+});
+
+test("the end of a run's stderr, in its error, hides the run's login", async () => {
+  const token = "sk-ant-oat-0123456789abcdef";
+  const f = fake(`401 Unauthorized: bearer ${token}`);
+  const runs = new Runs(f.launcher, { prices: {}, timeoutMs: 60_000 });
+  await runs.start({
+    ...start,
+    agent: "claude",
+    apiKey: "",
+    oauth: { provider: "anthropic", accessToken: token },
+  });
+  f.exit(1);
+  await tick();
+  const error = runs.progress(1, 0)?.error ?? "";
+  assert.match(error, /exit 1\): 401 Unauthorized/);
+  assert.equal(error.includes(token), false, error);
 });
 
 test("prices by model, with cached input", () => {

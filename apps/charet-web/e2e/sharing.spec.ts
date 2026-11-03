@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { addMember, enter } from "./people.ts";
 
-// A local charet shared from its Team page (`stack.ts`): the owner comes in with their admin link;
+// A local charet shared from its Settings page (`stack.ts`): the owner comes in with their admin link;
 // on either address everyone else goes by token (or looks as a visitor).
 const local = () => process.env.CHARET_E2E_SHARE_URL ?? "";
 const remote = () => process.env.CHARET_E2E_SHARE_REMOTE ?? "";
@@ -12,9 +12,9 @@ test("through the shared address, members bring their token and others are visit
 }) => {
   const owner = await (await browser.newContext()).newPage();
   await enter(owner, shareToken(), local());
-  await owner.goto(`${local()}/team`);
-  await expect(owner.getByText("Owner", { exact: true })).toBeVisible();
+  await owner.goto(`${local()}/settings/access`);
   const sharing = owner.getByRole("region", { name: "Sharing" });
+  await expect(sharing).toBeVisible();
   await sharing.getByRole("textbox", { name: "Address people open" }).fill(`${remote()}/`);
   await sharing.getByRole("button", { name: "Turn sharing on" }).click();
   await expect(sharing.getByRole("link", { name: remote() })).toBeVisible();
@@ -24,7 +24,7 @@ test("through the shared address, members bring their token and others are visit
   await outsider.goto(`${remote()}/`);
   await expect(outsider.getByRole("heading", { name: "Projects" })).toBeVisible();
   await expect(outsider.getByRole("button", { name: "Enter token" })).toBeVisible();
-  await expect(outsider.getByRole("link", { name: "Team" })).toHaveCount(0);
+  await expect(outsider.getByRole("link", { name: "Settings" })).toHaveCount(0);
 
   const jun = await addMember(owner, "Jun", "editor", local());
   await enter(outsider, jun, remote());
@@ -46,7 +46,7 @@ test("through the shared address, members bring their token and others are visit
 
 test("sharing through Tailscale shows the machine's tailnet name", async ({ page }) => {
   await enter(page, shareToken(), local());
-  await page.goto(`${local()}/team`);
+  await page.goto(`${local()}/settings/access`);
   const sharing = page.getByRole("region", { name: "Sharing" });
   await sharing.getByRole("radio", { name: "Tailscale network" }).click();
   await expect(sharing.getByText("Address: https://e2e.tail1.ts.net")).toBeVisible();
@@ -63,7 +63,7 @@ test("sharing on the local network opens the remote door on this machine's IP", 
   page,
 }) => {
   await enter(page, shareToken(), local());
-  await page.goto(`${local()}/team`);
+  await page.goto(`${local()}/settings/access`);
   const sharing = page.getByRole("region", { name: "Sharing" });
   await sharing.getByRole("radio", { name: "Local network" }).click();
   await sharing.getByRole("button", { name: "Turn sharing on" }).click();
