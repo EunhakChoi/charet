@@ -60,6 +60,7 @@ pub fn engine_with_agents() -> (Engine, Fakes) {
                 env_keys: HashMap::from([("claude".to_owned(), "sk-test-abcd".to_owned())]),
                 script: true,
                 max_running: 2,
+                run_minutes: 30,
             },
         )
         .with_providers(fakes.net.clone());
@@ -1601,7 +1602,14 @@ pub struct FakeNet {
     issued: Mutex<String>,
     refresh_with: Mutex<Option<String>>,
     refresh_refused: Mutex<Option<String>>,
+    /// The next refresh answers without a new refresh token.
+    keep_refresh_token: Mutex<bool>,
+    /// The refresh tokens refreshes were asked with.
+    refreshed_with: Mutex<Vec<String>>,
+    /// Runs while an exchange is in flight (an admin acting meanwhile).
+    during_exchange: Mutex<Option<Box<dyn Fn() + Send>>>,
     polls: Mutex<u32>,
+    device_starts: Mutex<u32>,
     refreshes: Mutex<u32>,
     exchanges: Mutex<Vec<(String, String)>>,
 }
@@ -1633,6 +1641,27 @@ impl FakeNet {
     /// The access token the next refresh issues (default: the one issued at sign-in).
     pub fn next_refresh(&self, access_token: &str) {
         *self.refresh_with.lock().unwrap() = Some(access_token.into());
+    }
+
+    /// The next refresh keeps the refresh token it was given (the answer has no new one).
+    pub fn keep_refresh_token(&self) {
+        *self.keep_refresh_token.lock().unwrap() = true;
+    }
+
+    /// What refreshes were asked with, oldest first.
+    pub fn refreshed_with(&self) -> Vec<String> {
+        self.refreshed_with.lock().unwrap().clone()
+    }
+
+    /// `act` runs while the next exchange is in flight, as if an admin did it just then.
+    pub fn during_exchange(&self, act: impl Fn() + Send + 'static) {
+        *self.during_exchange.lock().unwrap() = Some(Box::new(act));
+    }
+
+    fn exchange_in_flight(&self) {
+        if let Some(act) = self.during_exchange.lock().unwrap().take() {
+            act();
+        }
     }
 
     pub fn refuse_refresh(&self, message: &str) {
@@ -1688,8 +1717,11 @@ impl crate::ProviderNet for FakeNet {
     }
 
     fn openai_device_start(&self) -> Result<crate::DeviceAuth, crate::ProviderError> {
+        // Every sign-in gets its own id, as the provider's do.
+        let mut starts = self.device_starts.lock().unwrap();
+        *starts += 1;
         Ok(crate::DeviceAuth {
-            device_auth_id: "dev-1".into(),
+            device_auth_id: format!("dev-{starts}"),
             user_code: "ABCD-1234".into(),
             interval_secs: 30,
         })
@@ -1725,6 +1757,7 @@ impl crate::ProviderNet for FakeNet {
         {
             return Err(crate::ProviderError::Rejected("wrong exchange".into()));
         }
+        self.exchange_in_flight();
         Ok(Self::tokens(
             self.issued.lock().unwrap().clone(),
             "refresh-1",
@@ -1732,8 +1765,12 @@ impl crate::ProviderNet for FakeNet {
         ))
     }
 
-    fn openai_refresh(&self, _refresh_token: &str) -> Result<crate::Tokens, crate::ProviderError> {
+    fn openai_refresh(&self, refresh_token: &str) -> Result<crate::Tokens, crate::ProviderError> {
         *self.refreshes.lock().unwrap() += 1;
+        self.refreshed_with
+            .lock()
+            .unwrap()
+            .push(refresh_token.into());
         if let Some(message) = self.refresh_refused.lock().unwrap().clone() {
             return Err(crate::ProviderError::Rejected(message));
         }
@@ -1743,7 +1780,12 @@ impl crate::ProviderNet for FakeNet {
             .unwrap()
             .clone()
             .unwrap_or_else(|| self.issued.lock().unwrap().clone());
-        Ok(Self::tokens(access, "refresh-2", true))
+        let keep = std::mem::take(&mut *self.keep_refresh_token.lock().unwrap());
+        Ok(Self::tokens(
+            access,
+            if keep { "" } else { "refresh-2" },
+            true,
+        ))
     }
 
     fn anthropic_exchange(
@@ -1760,6 +1802,7 @@ impl crate::ProviderNet for FakeNet {
             .lock()
             .unwrap()
             .push((code.into(), verifier.into()));
+        self.exchange_in_flight();
         Ok(Self::tokens("sk-ant-oat-1".into(), "refresh-1", false))
     }
 

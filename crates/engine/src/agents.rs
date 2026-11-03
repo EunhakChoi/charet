@@ -41,6 +41,17 @@ pub struct AgentConfig {
     pub script: bool,
     /// Runs at once, server-wide.
     pub max_running: usize,
+    /// The longest a run may take, in minutes (`CHARET_AGENT_TIMEOUT_MIN`, which `charet-agent`
+    /// enforces). A login must outlast it, so it is renewed before a run when it would not.
+    pub run_minutes: u64,
+}
+
+impl AgentConfig {
+    /// The longest a run may take, in seconds: what the agent service allows, and at least the 30
+    /// minutes it allows unless told otherwise.
+    pub(crate) fn run_limit_secs(&self) -> u64 {
+        self.run_minutes.max(30) * 60
+    }
 }
 
 impl std::fmt::Debug for AgentConfig {

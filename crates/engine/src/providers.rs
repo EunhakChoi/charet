@@ -27,9 +27,9 @@ use crate::{AgentConfig, Engine, EngineError};
 
 /// A login nobody finishes is dropped after this many seconds.
 const LOGIN_TIMEOUT: u64 = 15 * 60;
-/// A token that expires within this many seconds is renewed before a run starts. A run lasts up to
-/// 30 minutes and its container cannot renew the token itself (it never sees the refresh token).
-const RENEW_WITHIN: u64 = 35 * 60;
+/// Extra seconds, beyond the longest a run may take, that a login must still have when a run
+/// starts: its container cannot renew the token itself (it never sees the refresh token).
+const RENEW_MARGIN: u64 = 5 * 60;
 
 /// The page where the person types the `ChatGPT` device code.
 pub const OPENAI_DEVICE_URL: &str = "https://auth.openai.com/codex/device";
@@ -509,8 +509,18 @@ impl Engine {
                 )),
                 ProviderError::Unavailable(message) => EngineError::Unavailable(message),
             })?;
-        self.store_login(provider, &tokens, None)?;
-        providers.pending().remove(&provider);
+        {
+            let mut pending = providers.pending();
+            // Cancelled or restarted while the code was exchanged: this login is not wanted now.
+            if !matches!(pending.get(&provider), Some(Pending::Code { verifier: v, .. }) if *v == verifier)
+            {
+                return Err(EngineError::Invalid(
+                    "that sign-in was cancelled or restarted; start again".into(),
+                ));
+            }
+            self.store_login(provider, &tokens, None)?;
+            pending.remove(&provider);
+        }
         self.sign_in_view(provider)
     }
 
@@ -549,7 +559,7 @@ impl Engine {
                 login: None,
             })),
             "oauth" => {
-                let login = self.fresh_login(provider)?;
+                let login = self.fresh_login(config, provider)?;
                 if provider == ProviderId::Openai
                     && login.as_ref().is_some_and(|l| l.id_token.is_empty())
                 {
@@ -744,13 +754,17 @@ impl Engine {
                 code_verifier,
             }) => {
                 drop(pending);
-                let finished = providers
+                let exchanged = providers
                     .net
                     .openai_exchange(&authorization_code, &code_verifier, OPENAI_DEVICE_REDIRECT)
-                    .map_err(sign_in_error)
-                    .and_then(|tokens| self.store_login(provider, &tokens, None));
+                    .map_err(sign_in_error);
                 let mut pending = providers.pending();
-                match finished {
+                // Cancelled or restarted while the code was exchanged: this login is not wanted now.
+                if !matches!(pending.get(&provider), Some(Pending::Device { device: d, .. }) if d.device_auth_id == device.device_auth_id)
+                {
+                    return;
+                }
+                match exchanged.and_then(|tokens| self.store_login(provider, &tokens, None)) {
                     Ok(()) => {
                         pending.remove(&provider);
                     }
@@ -790,13 +804,19 @@ impl Engine {
                 String::new(),
             )
         };
+        let refresh = if tokens.refresh.is_empty() {
+            old.map(|o| o.refresh.clone()).unwrap_or_default()
+        } else {
+            tokens.refresh.clone()
+        };
+        if refresh.is_empty() {
+            return Err(EngineError::Unavailable(
+                "the provider gave no refresh token, so the login could not be renewed".into(),
+            ));
+        }
         let login = Login {
             access: tokens.access.clone(),
-            refresh: if tokens.refresh.is_empty() {
-                old.map(|o| o.refresh.clone()).unwrap_or_default()
-            } else {
-                tokens.refresh.clone()
-            },
+            refresh,
             id_token,
             expires: now() + tokens.expires_in,
             account,
@@ -821,11 +841,16 @@ impl Engine {
     }
 
     /// The saved login with an access token good for a while, renewed when it is not.
-    fn fresh_login(&self, provider: ProviderId) -> Result<Option<Login>, EngineError> {
+    fn fresh_login(
+        &self,
+        config: &AgentConfig,
+        provider: ProviderId,
+    ) -> Result<Option<Login>, EngineError> {
+        let renew_within = config.run_limit_secs() + RENEW_MARGIN;
         let Some(login) = self.stored_login(provider)? else {
             return Ok(None);
         };
-        if login.expires > now() + RENEW_WITHIN {
+        if login.expires > now() + renew_within {
             return Ok(Some(login));
         }
         let providers = self.provider_net()?;
@@ -837,7 +862,7 @@ impl Engine {
         let Some(login) = self.stored_login(provider)? else {
             return Ok(None);
         };
-        if login.expires > now() + RENEW_WITHIN {
+        if login.expires > now() + renew_within {
             return Ok(Some(login));
         }
         let renewed = match provider {
@@ -1312,6 +1337,162 @@ mod tests {
             matches!(&error, EngineError::Unavailable(m) if m.contains("sign in again")),
             "{error:?}"
         );
+    }
+
+    #[test]
+    fn a_renewal_that_gives_no_new_refresh_token_keeps_the_old_one() {
+        let (engine, fakes, admin, _) = setup();
+        engine
+            .start_provider_sign_in(&admin, ProviderId::Openai)
+            .unwrap();
+        fakes.net.finish_device(&chatgpt_token("acct-1"));
+        expire_poll_wait(&engine, ProviderId::Openai);
+        engine.provider_sign_in(&admin, ProviderId::Openai).unwrap();
+
+        let config = engine.agent_config();
+        age_login(&engine, ProviderId::Openai, 10);
+        fakes.net.keep_refresh_token();
+        engine
+            .run_credential(&config, AgentKind::Codex)
+            .unwrap()
+            .unwrap();
+        // The login still renews with the refresh token it was given at sign-in.
+        age_login(&engine, ProviderId::Openai, 10);
+        engine
+            .run_credential(&config, AgentKind::Codex)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fakes.net.refreshed_with(), ["refresh-1", "refresh-1"]);
+    }
+
+    #[test]
+    fn a_login_the_provider_gives_no_refresh_token_for_is_not_kept() {
+        let (engine, _, _, _) = setup();
+        let tokens = Tokens {
+            access: chatgpt_token("acct-1"),
+            refresh: String::new(),
+            id_token: None,
+            expires_in: 3600,
+        };
+        assert!(matches!(
+            engine.store_login(ProviderId::Openai, &tokens, None),
+            Err(EngineError::Unavailable(_))
+        ));
+        assert_eq!(
+            engine.stored_login(ProviderId::Openai).unwrap().map(|_| ()),
+            None
+        );
+    }
+
+    #[test]
+    fn a_sign_in_cancelled_while_its_code_is_exchanged_does_not_sign_in() {
+        let (engine, fakes, admin, _) = setup();
+        // ChatGPT: the device code is exchanged after the person finished.
+        engine
+            .start_provider_sign_in(&admin, ProviderId::Openai)
+            .unwrap();
+        fakes.net.finish_device(&chatgpt_token("acct-1"));
+        expire_poll_wait(&engine, ProviderId::Openai);
+        let (cancel, who) = (engine.clone(), admin.clone());
+        fakes.net.during_exchange(move || {
+            cancel
+                .end_provider_sign_in(&who, ProviderId::Openai)
+                .unwrap();
+        });
+        let state = engine
+            .provider_sign_in(&admin, ProviderId::Openai)
+            .unwrap()
+            .state;
+        assert_eq!(state, SignInState::SignedOut, "{state:?}");
+        assert_eq!(
+            engine.stored_login(ProviderId::Openai).unwrap().map(|_| ()),
+            None
+        );
+
+        // A sign-in restarted meanwhile keeps its own state.
+        engine
+            .start_provider_sign_in(&admin, ProviderId::Openai)
+            .unwrap();
+        expire_poll_wait(&engine, ProviderId::Openai);
+        let (restart, who) = (engine.clone(), admin.clone());
+        fakes.net.during_exchange(move || {
+            restart
+                .start_provider_sign_in(&who, ProviderId::Openai)
+                .unwrap();
+        });
+        let state = engine.provider_sign_in(&admin, ProviderId::Openai).unwrap();
+        assert_eq!(
+            state.state,
+            SignInState::Waiting,
+            "the newer sign-in is still waiting"
+        );
+        assert_eq!(
+            engine.stored_login(ProviderId::Openai).unwrap().map(|_| ()),
+            None
+        );
+
+        // Claude: the pasted code is exchanged while the sign-in is cancelled.
+        let waiting = engine
+            .start_provider_sign_in(&admin, ProviderId::Anthropic)
+            .unwrap();
+        let verifier = waiting
+            .url
+            .unwrap()
+            .split("state=")
+            .nth(1)
+            .unwrap()
+            .to_owned();
+        let (cancel, who) = (engine.clone(), admin.clone());
+        fakes.net.during_exchange(move || {
+            cancel
+                .end_provider_sign_in(&who, ProviderId::Anthropic)
+                .unwrap();
+        });
+        let result =
+            engine.finish_provider_sign_in(&admin, ProviderId::Anthropic, &format!("c#{verifier}"));
+        assert!(matches!(result, Err(EngineError::Invalid(_))), "{result:?}");
+        assert_eq!(
+            engine
+                .stored_login(ProviderId::Anthropic)
+                .unwrap()
+                .map(|_| ()),
+            None
+        );
+    }
+
+    #[test]
+    fn a_login_is_renewed_to_outlast_the_longest_run() {
+        let short = AgentConfig::default();
+        assert_eq!(
+            short.run_limit_secs(),
+            30 * 60,
+            "at least charet-agent's default"
+        );
+        let long = AgentConfig {
+            run_minutes: 90,
+            ..AgentConfig::default()
+        };
+        assert_eq!(long.run_limit_secs(), 90 * 60);
+
+        // A token with 40 minutes left is fine for 30-minute runs, not for 90-minute ones.
+        let (engine, fakes, admin, _) = setup();
+        engine
+            .start_provider_sign_in(&admin, ProviderId::Openai)
+            .unwrap();
+        fakes.net.finish_device(&chatgpt_token("acct-1"));
+        expire_poll_wait(&engine, ProviderId::Openai);
+        engine.provider_sign_in(&admin, ProviderId::Openai).unwrap();
+        age_login(&engine, ProviderId::Openai, 40 * 60);
+        engine
+            .run_credential(&short, AgentKind::Codex)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fakes.net.refreshes(), 0);
+        engine
+            .run_credential(&long, AgentKind::Codex)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fakes.net.refreshes(), 1);
     }
 
     #[test]
