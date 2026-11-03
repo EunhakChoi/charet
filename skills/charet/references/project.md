@@ -129,7 +129,8 @@ void startFrame({
 XHR from the moment `startFrame` has started them. An app that builds its API client while its
 modules load (a module-level `createClient(...)`, or `const f = fetch`) keeps the `fetch` it saw
 then: imported at the top, that client talks to the real network, the screen shows a login page
-or `HTTP 404` instead of the mock data. `renderScreen` may be
+or `HTTP 404` instead of the mock data; `charet check` reports each such request as
+`[charet] unmocked request reached the network`. `renderScreen` may be
 async for this reason; `project.tsx` should import only types and leaf components from the app.
 
 Wrap screens in whatever providers the app needs (query client, theme, auth stubs), and in
