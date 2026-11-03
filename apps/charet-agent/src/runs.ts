@@ -3,6 +3,7 @@
 import type { Prices } from "./config.ts";
 import type { Launched, Launcher } from "./launch.ts";
 import type { Finished, Progress, RunEvent, RunnerLine, RunStart } from "./protocol.ts";
+import { scrub, secretsOf } from "./secrets.ts";
 
 interface Run {
   events: RunEvent[];
@@ -63,8 +64,9 @@ export class Runs {
         run.finished = "canceled";
       } else {
         run.finished = "failed";
-        const stderr = run.launched?.stderr() ?? "";
-        run.error ??= `the run stopped (exit ${code})${stderr ? `: ${stderr.slice(-500)}` : ""}`;
+        // Its stderr is not the runner's report: hide the credentials before cutting it.
+        const stderr = scrub(run.launched?.stderr() ?? "", secretsOf(start)).slice(-500);
+        run.error ??= `the run stopped (exit ${code})${stderr ? `: ${stderr}` : ""}`;
       }
     });
   }

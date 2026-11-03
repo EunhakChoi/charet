@@ -2,14 +2,28 @@
 
 import { spawn } from "node:child_process";
 import type { RunnerLine, RunSpec } from "../protocol.ts";
+import { scrub } from "../secrets.ts";
+
+let secrets: readonly string[] = [];
+
+/** From now on, what this run reports (`emit`, `hide`) never holds these credential values. */
+export function keepSecret(values: readonly string[]): void {
+  secrets = values;
+}
+
+/** `text` without the run's credentials. Cut text after this, not before: a cut credential no
+ * longer matches. */
+export function hide(text: string): string {
+  return scrub(text, secrets);
+}
 
 /** Reports to charet-agent: one JSON line on stdout. */
 export function emit(line: RunnerLine): void {
-  process.stdout.write(`${JSON.stringify(line)}\n`);
+  process.stdout.write(`${hide(JSON.stringify(line))}\n`);
 }
 
 export function tool(name: string, text: string): void {
-  emit({ type: "event", kind: "tool", tool: name, text: text.slice(0, 2000) });
+  emit({ type: "event", kind: "tool", tool: name, text: hide(text).slice(0, 2000) });
 }
 
 export function say(text: string): void {

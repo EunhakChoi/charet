@@ -43,7 +43,8 @@ export interface Config {
 
 export type Prices = Record<string, { input: number; output: number; cachedInput?: number }>;
 
-const DEFAULT_ALLOW = ["api.anthropic.com", "api.openai.com"];
+/** The model APIs; `chatgpt.com` is where Codex with a ChatGPT login goes (`/backend-api`). */
+const DEFAULT_ALLOW = ["api.anthropic.com", "api.openai.com", "chatgpt.com"];
 
 export function readConfig(env: NodeJS.ProcessEnv): Config {
   const bind = address(env, "CHARET_AGENT_BIND", "127.0.0.1:5290");

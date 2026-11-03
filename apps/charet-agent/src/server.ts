@@ -54,7 +54,9 @@ async function handle(
     try {
       body = JSON.parse((await read(req, MAX_BODY)).toString());
     } catch (error) {
-      return send(res, 400, { code: "invalid", message: (error as Error).message });
+      // A JSON syntax error quotes the body, and the body holds the run's credentials.
+      const message = error instanceof SyntaxError ? "not JSON" : (error as Error).message;
+      return send(res, 400, { code: "invalid", message });
     }
     if (!isRunStart(body)) return send(res, 400, { code: "invalid", message: "not a run" });
     await options.runs.start(body);
