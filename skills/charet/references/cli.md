@@ -8,7 +8,7 @@ are in) and `--server <url>` (default: the checkout's server, else `CHARET_URL`,
 
 | Command | Does |
 |---|---|
-| `charet setup [--yes]` | First-run guide: checks the server, offers to install this skill |
+| `charet setup [--yes]` | First-run guide: checks the server, signs the CLI in as the owner, installs this skill unless the agent already finds one (a link to the repo, an identical copy, or a project folder above here has it) |
 | `charet login [--token t]` | Signs in to a team server with the token an admin handed over (asks for it without `--token`). Not needed in local mode |
 | `charet whoami` · `charet logout` | Who the CLI acts as · forget the saved token on this machine |
 | `charet doctor` | Checks node, git, the server, charet-workspace, charet-render, cookie separation (exit 1 on failure) |

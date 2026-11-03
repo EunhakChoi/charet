@@ -39,8 +39,13 @@ charet ls                # screens, stories, flows and whether their captures ar
   installing anything; the first build takes minutes).
 - "Enter your token first" / "token was reissued or removed" → the CLI is not signed in. When the
   server runs on this machine (`charet doctor` reaches it at localhost), run `charet setup --yes`
-  yourself: it reads the owner's token from the server and keeps it — no need to ask anyone. Its
-  output contains the admin link with the token; don't repeat it. Otherwise (a team server
+  yourself: it reads the owner's token from the server and keeps it for the CLI — no need to ask
+  anyone. It also puts this skill in the agent's own folder unless it finds one already (it says
+  so, and leaves that one alone). Its output has the owner's admin link, which carries the token:
+  whoever set charet up needs it once to sign their browser in, so hand it to them in this
+  conversation when they ask for it, and on a fresh setup they have not opened yet. Keep it out of
+  anything that outlives the chat (commits, files, PR text, channels, other people); the team gets
+  the plain addresses from `charet url`. Otherwise (a team server
   elsewhere) ask the person for the token an admin gave them and have them run
   `charet login --token <token>`; CI uses `CHARET_TOKEN`.
 - On a team server, `charet inbox` lists what concerns the person (new comments, answers in their
@@ -98,6 +103,10 @@ charet ls --stale                   # screens whose capture is older than the co
   as usual and also saves a copy to look at. Look at them before saying a change is done.
 - Merge only when the user (or the team, in review) agreed; a draft is the safe default. When the
   user asked for the change outright and works alone, `charet push -m "…" --merge` does both.
+- After a merge the checkout that followed the branch is back on main (the output says so); with
+  local changes it stays on the branch and says that instead. Capture for the board from a checkout
+  on main (`charet status`): from a branch checkout `capture --out` only saves pictures here and
+  prints that the board is unchanged. An empty `charet ls --stale` shows the board is current.
 - Merge refused with a clash: someone changed the same lines on main. `charet branch catch-up`,
   `charet pull`, settle the files named in the message, push, then merge again.
 - A merge first builds what merging gives and opens the screens the change can reach (it waits

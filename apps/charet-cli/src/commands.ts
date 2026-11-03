@@ -267,9 +267,25 @@ export async function push(
   }
   const version = await mergeBranch(ctx, state.server, state.project, number);
   await switchToMain(ctx, dir);
-  emit(ctx, version, () =>
-    say(ctx, "cli.merge.done", { number: String(number), version: String(version.number) }),
-  );
+  emit(ctx, version, () => {
+    say(ctx, "cli.merge.done", { number: String(number), version: String(version.number) });
+    say(ctx, "cli.merge.backOnMain", { version: String(version.number) });
+  });
+}
+
+/**
+ * After `charet branch merge`: a checkout that followed the merged branch goes back to main, so
+ * the next `capture` from it updates the board. Local changes keep it where it is.
+ */
+export async function returnToMain(ctx: Context, number: number, version: number): Promise<void> {
+  const found = findCheckout(ctx.cwd);
+  if (found?.state.branch !== number) return;
+  if (localChanges(found.dir).length > 0) {
+    if (!ctx.json) say(ctx, "cli.merge.stayed", { number: String(number) });
+    return;
+  }
+  await switchToMain(ctx, found.dir);
+  if (!ctx.json) say(ctx, "cli.merge.backOnMain", { version: String(version) });
 }
 
 /** Where a branch is shown in the web tool. */

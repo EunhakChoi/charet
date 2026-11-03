@@ -29,7 +29,11 @@ export interface ScreenDef<Mock = unknown> {
   route?: string;
   /** Viewport; defaults to the project's `screenSize`. */
   size?: Size;
-  /** Query parameters the screen reads from `window.location` (e.g. an error after a redirect). */
+  /**
+   * Query parameters of the screen, e.g. `{ tab: "runs" }` (an object, not a `"?tab=runs"` string).
+   * They are set on `window.location` and also added to the route `renderScreen` gets, so a memory
+   * router sees them too.
+   */
   query?: Record<string, string>;
   /** Request handlers for this screen, tried before the project's `mocks`. */
   mocks?: Mock[];
@@ -104,6 +108,18 @@ export function defineProject<Mock, Node>(project: ProjectDef<Mock, Node>): Proj
     throw new Error(`invalid charet project:\n${problems.map((p) => `  - ${p}`).join("\n")}`);
   }
   return project;
+}
+
+/**
+ * The route a screen opens: its route (or its page's) with the screen's `query` merged in; the
+ * route's own query stays, the screen's value wins. A memory router has no `window.location` to
+ * read the query from, so the frame hands it over inside the route.
+ */
+export function routeWithQuery(route: string, query?: Record<string, string>): string {
+  if (!query || Object.keys(query).length === 0) return route;
+  const url = new URL(route, "http://charet.invalid");
+  for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
+  return `${url.pathname}${url.search}${url.hash}`;
 }
 
 export const DEFAULT_SCREEN_SIZE: Size = { w: 1440, h: 900 };

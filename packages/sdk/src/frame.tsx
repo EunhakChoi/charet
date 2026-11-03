@@ -5,12 +5,21 @@
 import type { RequestHandler } from "msw";
 import { type ReactNode, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import type { ProjectDef, ScreenDef, SetupKit } from "./project.ts";
+import { type ProjectDef, routeWithQuery, type ScreenDef, type SetupKit } from "./project.ts";
 
 export interface FrameOptions {
   project: ProjectDef<RequestHandler, ReactNode>;
-  /** Renders the app at `route` (e.g. a memory router over the app's routes, inside its providers). */
-  renderScreen: (screen: ScreenDef<RequestHandler>, route: string) => ReactNode;
+  /**
+   * Renders the app at `route` (e.g. a memory router over the app's routes, inside its providers).
+   * The route carries the screen's `query`. May be async: load the app's modules in here
+   * (`await import("@/routes")`), after the mocks are running. A client an app builds while its
+   * modules load (a module-level `createClient`, `const f = fetch`) keeps the `fetch` it saw then,
+   * so imported at the top of the frame it would skip the mocks.
+   */
+  renderScreen: (
+    screen: ScreenDef<RequestHandler>,
+    route: string,
+  ) => ReactNode | Promise<ReactNode>;
   /** Wraps stories, e.g. with the app's theme provider. */
   wrapStory?: (node: ReactNode) => ReactNode;
   /** Root element id (default `root`). */
@@ -44,7 +53,10 @@ export async function startFrame(options: FrameOptions): Promise<void> {
       for (const [key, value] of Object.entries(screen.query)) url.searchParams.set(key, value);
       history.replaceState(history.state, "", url);
     }
-    node = options.renderScreen(screen, screen.route ?? page?.route ?? "/");
+    node = await options.renderScreen(
+      screen,
+      routeWithQuery(screen.route ?? page?.route ?? "/", screen.query),
+    );
   } else if (storyId) {
     const story = project.stories?.find((s) => s.id === storyId);
     if (!story) return fail(container, `unknown story "${storyId}"`);

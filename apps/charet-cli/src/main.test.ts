@@ -258,6 +258,29 @@ test("import, checkout, push, pull, versions and diff", async () => {
   assert.match((await charet(["pull"], c)).out, /Updated to/);
   assert.ok(existsSync(join(c, "apps/web/src/page.tsx")));
   assert.equal((await charet(["restore", "v1", "-p", "demo"])).code, 1);
+
+  // `branch merge` from the checkout that follows the branch brings it back to main, so a capture
+  // from it updates the board; local changes keep it on the branch.
+  const follow = join(work, "follow");
+  await charet(["checkout", "demo", follow]);
+  write(follow, { "apps/web/src/page.tsx": "export const title = 'three';\n" });
+  assert.equal((await charet(["push", "-m", "retitle again"], follow)).code, 0);
+  assert.match((await charet(["status"], follow)).out, /^branch {3}#\d+$/m);
+  const merged = await charet(["branch", "merge"], follow);
+  assert.equal(merged.code, 0, merged.err);
+  assert.match(merged.out, /Merged branch #\d+ as version \d+\./);
+  assert.match(merged.out, /back on main \(version \d+\)/);
+  assert.match((await charet(["status"], follow)).out, /^main {5}v\d+/m);
+
+  const dirty = join(work, "dirty");
+  await charet(["checkout", "demo", dirty]);
+  write(dirty, { "apps/web/src/page.tsx": "export const title = 'four';\n" });
+  assert.equal((await charet(["push", "-m", "retitle once more"], dirty)).code, 0);
+  write(dirty, { "apps/web/src/other.tsx": "export const other = 1;\n" });
+  const kept = await charet(["branch", "merge"], dirty);
+  assert.equal(kept.code, 0, kept.err);
+  assert.match(kept.out, /still follows branch #\d+ \(it has local changes/);
+  assert.match((await charet(["status"], dirty)).out, /^branch {3}#\d+$/m);
 });
 
 test("init creates a project from a template and checks it out", async () => {

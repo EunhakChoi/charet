@@ -3,10 +3,18 @@
 
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { createConnection } from "node:net";
 import { homedir } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, relative, resolve } from "node:path";
 import { t } from "@charet/i18n";
 import pkg from "../package.json" with { type: "json" };
 import { rememberToken, withToken } from "./auth.ts";
@@ -119,11 +127,21 @@ export async function setup(ctx: Context, assumeYes: boolean): Promise<number> {
   const agents = detectAgents(ctx);
   if (agents.length === 0) {
     ctx.out(t("cli.setup.noAgents", {}, ctx.locale));
-  } else if (
-    assumeYes ||
-    (await yes(ctx, t("cli.setup.skill", { agents: agents.join(", ") }, ctx.locale)))
-  ) {
-    installSkill(ctx, agents);
+  } else {
+    // Agents that already have the skill (or see one from here) are told so and not asked.
+    const steps = skillPlan(ctx, agents, true);
+    reportSkill(ctx, steps);
+    const needed = steps.filter((step) => step.action === "install");
+    if (
+      needed.length > 0 &&
+      (assumeYes ||
+        (await yes(
+          ctx,
+          t("cli.setup.skill", { agents: needed.map((s) => s.agent).join(", ") }, ctx.locale),
+        )))
+    ) {
+      installSkill(ctx, needed);
+    }
   }
   ctx.out(t("cli.setup.next", {}, ctx.locale));
   return 0;
@@ -255,11 +273,77 @@ function detectAgents(ctx: Context): Agent[] {
   return found;
 }
 
-function installSkill(ctx: Context, agents: Agent[]): void {
-  for (const agent of agents) {
+type SkillAction = "install" | "linked" | "upToDate" | "present";
+interface SkillStep {
+  agent: Agent;
+  target: string;
+  action: SkillAction;
+  /** Where the skill is, for the notes (the target, or a project folder that has one). */
+  dir: string;
+}
+
+/**
+ * What each agent needs: a copy, or nothing because the skill is already there: a link to this
+ * repository, an identical copy, or (with `reuse`) a project-level skill the agent finds from the
+ * working directory. A copy that differs is updated.
+ */
+function skillPlan(ctx: Context, agents: Agent[], reuse: boolean): SkillStep[] {
+  return agents.map((agent) => {
     const target = skillTarget(ctx, agent);
+    const step = (action: SkillAction, dir = target): SkillStep => ({ agent, target, action, dir });
+    if (existsSync(target)) {
+      if (realpathSync(target) === realpathSync(SKILL_DIR)) return step("linked");
+      return sameSkill(SKILL_DIR, target) ? step("upToDate") : step("install");
+    }
+    const project = reuse ? projectSkill(ctx, agent) : undefined;
+    return project ? step("present", project) : step("install");
+  });
+}
+
+/** A charet skill in a project folder above the working directory: `.claude/skills` is read by
+ * Claude, `.agents/skills` by Codex. */
+function projectSkill(ctx: Context, agent: Agent): string | undefined {
+  const folder = agent === "claude" ? ".claude" : ".agents";
+  let dir = resolve(ctx.cwd);
+  for (;;) {
+    const candidate = join(dir, folder, "skills", "charet");
+    if (existsSync(join(candidate, "SKILL.md"))) return candidate;
+    const parent = dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
+}
+
+/** Every file of a skill folder by relative path; evals/ are the skill's own test prompts
+ * (skill-creator), not something agents need. */
+function skillFiles(root: string, dir = root, found = new Map<string, Buffer>()) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (path === join(root, "evals")) continue;
+    if (entry.isDirectory()) skillFiles(root, path, found);
+    else found.set(relative(root, path), readFileSync(path));
+  }
+  return found;
+}
+
+function sameSkill(a: string, b: string): boolean {
+  const left = skillFiles(a);
+  const right = skillFiles(b);
+  if (left.size !== right.size) return false;
+  for (const [file, bytes] of left) if (!right.get(file)?.equals(bytes)) return false;
+  return true;
+}
+
+/** Says what is already in place; the steps to install are left to the caller. */
+function reportSkill(ctx: Context, steps: SkillStep[]): void {
+  for (const { agent, dir, action } of steps) {
+    if (action !== "install") ctx.out(t(`cli.skill.${action}`, { agent, dir }, ctx.locale));
+  }
+}
+
+function installSkill(ctx: Context, steps: SkillStep[]): void {
+  for (const { agent, target } of steps) {
     mkdirSync(dirname(target), { recursive: true });
-    // evals/ are the skill's own test prompts (skill-creator), not something agents need.
     cpSync(SKILL_DIR, target, {
       recursive: true,
       force: true,
@@ -281,7 +365,13 @@ export function skill(
     ...(codex ? ["codex" as const] : []),
   ];
   const agents = chosen.length ? chosen : detectAgents(ctx);
-  installSkill(ctx, agents.length ? agents : ["claude"]);
+  // Asked for outright: only what is already in place is skipped, a project-level one is not.
+  const steps = skillPlan(ctx, agents.length ? agents : ["claude"], false);
+  reportSkill(ctx, steps);
+  installSkill(
+    ctx,
+    steps.filter((step) => step.action === "install"),
+  );
   return 0;
 }
 
