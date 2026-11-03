@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { defineProject, type ProjectDef, toManifest, validate } from "./project.ts";
+import { defineProject, type ProjectDef, routeWithQuery, toManifest, validate } from "./project.ts";
 
 const base: ProjectDef = {
   title: "Shop",
@@ -101,4 +101,16 @@ test("the manifest fills defaults and marks planned steps", () => {
   ]);
   // Functions never reach the JSON.
   assert.doesNotMatch(JSON.stringify(manifest), /render|setup|mocks/);
+});
+
+test("a screen's query goes into the route for a memory router", () => {
+  assert.equal(routeWithQuery("/targets", { tab: "configs" }), "/targets?tab=configs");
+  // The route's own query stays; the screen's value wins; the hash stays.
+  assert.equal(routeWithQuery("/runs?x=1", { tab: "a" }), "/runs?x=1&tab=a");
+  assert.equal(routeWithQuery("/runs?tab=b", { tab: "a" }), "/runs?tab=a");
+  assert.equal(routeWithQuery("/docs#top", { tab: "a" }), "/docs?tab=a#top");
+  assert.equal(routeWithQuery("/q", { text: "a b&c" }), "/q?text=a+b%26c");
+  // Nothing to add: the route as it was.
+  assert.equal(routeWithQuery("/runs?x=1"), "/runs?x=1");
+  assert.equal(routeWithQuery("/runs?x=1", {}), "/runs?x=1");
 });
