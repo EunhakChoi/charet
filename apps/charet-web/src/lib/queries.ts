@@ -9,6 +9,7 @@ import {
   type Comment,
   type Element,
   HttpError,
+  type ProviderId,
   type Role,
   type ShareMode,
   type TargetKind,
@@ -675,6 +676,97 @@ export function useAgentCosts(enabled: boolean) {
     queryKey: ["admin", "costs"],
     enabled,
     queryFn: () => unwrap(api.GET("/api/admin/costs")),
+  });
+}
+
+/** The providers the web agent can run on, each with its API key and sign-in (admins). */
+export function useProviders(enabled = true) {
+  return useQuery({
+    queryKey: ["admin", "providers"],
+    enabled,
+    queryFn: () => unwrap(api.GET("/api/admin/agent/providers")),
+  });
+}
+
+const provider = (id: ProviderId) => ({ params: { path: { id } } });
+
+/** Asks a provider whether an API key works; nothing is saved. */
+export function useCheckKey() {
+  return useMutation({
+    mutationFn: (input: { provider: ProviderId; key: string }) =>
+      unwrap(
+        api.POST("/api/admin/agent/providers/{id}/key/check", {
+          ...provider(input.provider),
+          body: { key: input.key },
+        }),
+      ),
+  });
+}
+
+/** Saving, removing and choosing what the web agent uses for a provider. */
+export function useProviderActions() {
+  const client = useQueryClient();
+  const settled = () => {
+    void client.invalidateQueries({ queryKey: ["admin"] });
+    void client.invalidateQueries({ queryKey: ["agent"] });
+  };
+  return {
+    saveKey: useMutation({
+      mutationFn: (input: { provider: ProviderId; key: string }) =>
+        unwrap(
+          api.PUT("/api/admin/agent/providers/{id}/key", {
+            ...provider(input.provider),
+            body: { key: input.key },
+          }),
+        ),
+      onSettled: settled,
+    }),
+    removeKey: useMutation({
+      mutationFn: (id: ProviderId) =>
+        unwrapEmpty(api.DELETE("/api/admin/agent/providers/{id}/key", provider(id))),
+      onSettled: settled,
+    }),
+    choose: useMutation({
+      mutationFn: (input: { provider: ProviderId; use: "key" | "oauth" }) =>
+        unwrap(
+          api.PUT("/api/admin/agent/providers/{id}/use", {
+            ...provider(input.provider),
+            body: { use: input.use },
+          }),
+        ),
+      onSettled: settled,
+    }),
+    startSignIn: useMutation({
+      mutationFn: (id: ProviderId) =>
+        unwrap(api.POST("/api/admin/agent/providers/{id}/oauth", provider(id))),
+      onSettled: settled,
+    }),
+    /** Claude: the code its page showed, pasted back. */
+    finishSignIn: useMutation({
+      mutationFn: (input: { provider: ProviderId; code: string }) =>
+        unwrap(
+          api.POST("/api/admin/agent/providers/{id}/oauth/code", {
+            ...provider(input.provider),
+            body: { code: input.code },
+          }),
+        ),
+      onSettled: settled,
+    }),
+    signOut: useMutation({
+      mutationFn: (id: ProviderId) =>
+        unwrapEmpty(api.DELETE("/api/admin/agent/providers/{id}/oauth", provider(id))),
+      onSettled: settled,
+    }),
+  };
+}
+
+/** Where a sign-in stands; polled while its window is open. */
+export function useSignInStatus(id: ProviderId, waiting: boolean) {
+  return useQuery({
+    queryKey: ["admin", "providers", id, "oauth"],
+    enabled: waiting,
+    refetchInterval: waiting ? 2000 : false,
+    queryFn: () => unwrap(api.GET("/api/admin/agent/providers/{id}/oauth", provider(id))),
   });
 }
 

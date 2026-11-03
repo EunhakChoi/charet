@@ -12,7 +12,7 @@ test.describe.configure({ mode: "serial" });
 test("a visitor looks around under a made-up name, then enters a token", async ({ page }) => {
   await page.goto(`${base()}/`);
   await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Team" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Settings" })).toHaveCount(0);
   // An adjective and an animal, the same on every page load.
   const name = page.getByText(/^[A-Z][a-z]+ [A-Z][a-z]+$/).first();
   const before = await name.textContent();
@@ -25,7 +25,7 @@ test("a visitor looks around under a made-up name, then enters a token", async (
   await expect(page.getByRole("alert")).toContainText("does not work");
   await page.getByRole("textbox", { name: "Token" }).fill(adminToken());
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("link", { name: "Team" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Settings" })).toBeVisible();
   await expect(page.getByText("Admin", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("button", { name: "Enter token" })).toBeVisible();
@@ -36,7 +36,7 @@ test("an admin adds a member whose link signs them in; a second browser signs th
 }) => {
   const admin = await (await browser.newContext()).newPage();
   await enter(admin, adminToken());
-  await admin.getByRole("link", { name: "Team" }).click();
+  await admin.getByRole("link", { name: "Settings" }).click();
   const members = admin.getByRole("region", { name: "Members" });
   await members.getByRole("textbox", { name: "Name", exact: true }).fill("Kim");
   await members.getByRole("radio", { name: "Commenter" }).first().click();
@@ -47,7 +47,7 @@ test("an admin adds a member whose link signs them in; a second browser signs th
   const laptop = await (await browser.newContext()).newPage();
   await enter(laptop, token);
   await expect(laptop.getByText("Kim", { exact: true })).toBeVisible();
-  await expect(laptop.getByRole("link", { name: "Team" })).toHaveCount(0);
+  await expect(laptop.getByRole("link", { name: "Settings" })).toHaveCount(0);
 
   const phone = await (await browser.newContext()).newPage();
   await enter(phone, token);
@@ -65,7 +65,7 @@ test("an admin adds a member whose link signs them in; a second browser signs th
 test("with visitors turned off the server asks for a token", async ({ browser }) => {
   const admin = await (await browser.newContext()).newPage();
   await enter(admin, adminToken());
-  await admin.goto(`${base()}/team`);
+  await admin.goto(`${base()}/settings/access`);
   const visitors = admin.getByRole("region", { name: "Visitors" });
   await visitors.getByRole("radio", { name: "Token required" }).click();
   await expect(visitors.getByRole("radio", { name: "Token required" })).toBeChecked();
@@ -93,7 +93,7 @@ test("a project can let visitors comment, even when the server asks for a token"
   const visitors = admin.getByRole("region", { name: "Visitors (no token)" });
   await visitors.getByRole("radio", { name: "Can comment" }).click();
   await expect(visitors.getByRole("radio", { name: "Can comment" })).toBeChecked();
-  await admin.goto(`${base()}/team`);
+  await admin.goto(`${base()}/settings/access`);
   const team = admin.getByRole("region", { name: "Visitors", exact: true });
   await team.getByRole("radio", { name: "Token required" }).click();
   await expect(team.getByRole("radio", { name: "Token required" })).toBeChecked();

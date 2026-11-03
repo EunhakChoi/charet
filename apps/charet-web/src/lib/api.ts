@@ -25,6 +25,10 @@ export type AgentRun = Schemas["AgentRun"];
 export type AgentMessage = Schemas["AgentMessage"];
 export type AgentKind = Schemas["AgentKind"];
 export type AgentStatus = Schemas["AgentStatus"];
+export type Provider = Schemas["Provider"];
+export type ProviderId = Schemas["ProviderId"];
+export type KeyCheck = Schemas["KeyCheck"];
+export type OAuthStatus = Schemas["OAuthStatus"];
 export type Theme = "light" | "dark";
 export type TargetKind = "screen" | "story";
 

@@ -8,12 +8,11 @@ import type { AgentKind } from "@/lib/api";
 import { useLocale, useT } from "@/lib/i18n";
 import { useAgentCosts, useAgentSettings } from "@/lib/queries";
 
-/** The web agent: which agent runs by default, with which model, and the API keys. */
+/** The web agent: which agent runs by default and with which model (the accounts are `AgentProviders`). */
 export function AgentSettings() {
   const t = useT();
   const { status, save } = useAgentSettings(true);
   const [models, setModels] = useState<Record<string, string>>({});
-  const [keys, setKeys] = useState<Record<string, string>>({});
   useEffect(() => {
     if (status.data) {
       setModels(Object.fromEntries(status.data.agents.map((a) => [a.agent, a.model])));
@@ -22,8 +21,7 @@ export function AgentSettings() {
   const data = status.data;
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    const typed = Object.fromEntries(Object.entries(keys).filter(([, v]) => v.trim()));
-    save.mutate({ models, keys: typed }, { onSuccess: () => setKeys({}) });
+    save.mutate({ models });
   };
   return (
     <Section title={t("web.agentAdmin.title")} lead={t("web.agentAdmin.lead")}>
@@ -59,33 +57,6 @@ export function AgentSettings() {
                   placeholder={t("web.agentAdmin.modelDefault")}
                   aria-label={t("web.agentAdmin.model", { agent: a.agent })}
                 />
-                <Input
-                  className="w-56 flex-1"
-                  type="password"
-                  autoComplete="off"
-                  value={keys[a.agent] ?? ""}
-                  onChange={(event) => setKeys({ ...keys, [a.agent]: event.target.value })}
-                  disabled={a.key === "env"}
-                  placeholder={
-                    a.key === "env"
-                      ? t("web.agentAdmin.keyEnv", { last4: a.keyLast4 ?? "" })
-                      : a.key === "settings"
-                        ? t("web.agentAdmin.keySaved", { last4: a.keyLast4 ?? "" })
-                        : t("web.agentAdmin.keyNone")
-                  }
-                  aria-label={t("web.agentAdmin.key", { agent: a.agent })}
-                />
-                {a.key === "settings" && (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    disabled={save.isPending}
-                    onClick={() => save.mutate({ keys: { [a.agent]: "" } })}
-                  >
-                    {t("web.agentAdmin.removeKey")}
-                  </Button>
-                )}
               </div>
             ))}
           <div className="flex items-center justify-end gap-2 p-3">

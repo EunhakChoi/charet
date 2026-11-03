@@ -514,15 +514,18 @@ impl Engine {
         self.sign_in_view(provider)
     }
 
-    /// Cancels a sign-in that waits, or signs the account out. Admins only.
+    /// Cancels a sign-in that waits (or dismisses one that failed); with none under way, signs the
+    /// account out. Admins only.
     pub fn end_provider_sign_in(
         &self,
         actor: &Actor,
         provider: ProviderId,
     ) -> Result<(), EngineError> {
         admin_only(actor)?;
-        if let Some(providers) = &self.providers {
-            providers.pending().remove(&provider);
+        if let Some(providers) = &self.providers
+            && providers.pending().remove(&provider).is_some()
+        {
+            return Ok(());
         }
         self.ports.settings.set(&provider.login_setting(), "")?;
         self.ports.settings.set(&provider.use_setting(), "")?;
@@ -1186,6 +1189,37 @@ mod tests {
                 .state,
             SignInState::SignedOut
         );
+    }
+
+    #[test]
+    fn cancelling_a_new_sign_in_keeps_the_account_that_is_signed_in() {
+        let (engine, fakes, admin, _) = setup();
+        engine
+            .start_provider_sign_in(&admin, ProviderId::Openai)
+            .unwrap();
+        fakes.net.finish_device(&chatgpt_token("acct-1"));
+        expire_poll_wait(&engine, ProviderId::Openai);
+        engine.provider_sign_in(&admin, ProviderId::Openai).unwrap();
+
+        // A second sign-in is started and cancelled: the account stays.
+        engine
+            .start_provider_sign_in(&admin, ProviderId::Openai)
+            .unwrap();
+        engine
+            .end_provider_sign_in(&admin, ProviderId::Openai)
+            .unwrap();
+        let state = |engine: &Engine| {
+            engine
+                .provider_sign_in(&admin, ProviderId::Openai)
+                .unwrap()
+                .state
+        };
+        assert_eq!(state(&engine), SignInState::SignedIn);
+        // With none under way, the same call signs out.
+        engine
+            .end_provider_sign_in(&admin, ProviderId::Openai)
+            .unwrap();
+        assert_eq!(state(&engine), SignInState::SignedOut);
     }
 
     #[test]

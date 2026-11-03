@@ -1,6 +1,19 @@
-import { Check, Copy, Link2, RefreshCw, Send, Trash2 } from "lucide-react";
+import {
+  Bot,
+  Check,
+  Copy,
+  Globe,
+  Link2,
+  RefreshCw,
+  Send,
+  Trash2,
+  Users,
+  Webhook as WebhookIcon,
+} from "lucide-react";
 import { type FormEvent, useState } from "react";
+import { Navigate, NavLink, useParams } from "react-router";
 import { AgentCosts, AgentSettings } from "@/components/AgentAdmin";
+import { AgentProviders } from "@/components/AgentProviders";
 import { AppHeader } from "@/components/AppHeader";
 import { CopyOnce, copyText } from "@/components/CopyOnce";
 import { Section } from "@/components/Section";
@@ -21,30 +34,72 @@ import {
   useWebhookActions,
   useWebhooks,
 } from "@/lib/queries";
+import { cn } from "@/lib/utils";
 
 const ROLES: Role[] = ["admin", "editor", "commenter", "viewer"];
 
-/** `/team`: members and their tokens, visitors, sharing, webhooks and the web agent (admins). */
-export function Team() {
+const TABS = ["members", "access", "webhooks", "agent"] as const;
+type Tab = (typeof TABS)[number];
+const ICONS = { members: Users, access: Globe, webhooks: WebhookIcon, agent: Bot } as const;
+
+/** `/settings/<tab>`: members, who may look and how it is shared, webhooks, the web agent (admins). */
+export function Settings() {
   const t = useT();
   const me = useMe();
   const admin = me.data?.role === "admin";
+  const tab = useParams().tab;
+  if (!TABS.includes(tab as Tab)) return <Navigate to="/settings/members" replace />;
+  const current = tab as Tab;
   return (
     <div className="flex min-h-svh flex-col">
       <AppHeader />
-      <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-8 p-6">
-        <h1 className="text-2xl font-semibold">{t("web.team.title")}</h1>
+      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 p-6">
+        <h1 className="text-2xl font-semibold">{t("web.settings.title")}</h1>
         {admin ? (
-          <>
-            <Members />
-            <Visitors />
-            <SharingPanel />
-            <Webhooks />
-            <AgentSettings />
-            <AgentCosts />
-          </>
+          <div className="flex flex-col gap-6 md:flex-row md:gap-10">
+            <nav
+              aria-label={t("web.settings.sections")}
+              className="flex shrink-0 gap-1 overflow-x-auto md:w-44 md:flex-col"
+            >
+              {TABS.map((id) => {
+                const Icon = ICONS[id];
+                return (
+                  <NavLink
+                    key={id}
+                    to={`/settings/${id}`}
+                    className={({ isActive }) =>
+                      cn(
+                        "flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground",
+                        isActive && "bg-muted font-medium text-foreground",
+                      )
+                    }
+                  >
+                    <Icon className="size-4" />
+                    {t(`web.settings.tab.${id}`)}
+                  </NavLink>
+                );
+              })}
+            </nav>
+            <div className="flex min-w-0 flex-1 flex-col gap-8">
+              {current === "members" && <Members />}
+              {current === "access" && (
+                <>
+                  <Visitors />
+                  <SharingPanel />
+                </>
+              )}
+              {current === "webhooks" && <Webhooks />}
+              {current === "agent" && (
+                <>
+                  <AgentProviders />
+                  <AgentSettings />
+                  <AgentCosts />
+                </>
+              )}
+            </div>
+          </div>
         ) : (
-          <p className="text-sm text-muted-foreground">{t("web.team.adminsOnly")}</p>
+          <p className="text-sm text-muted-foreground">{t("web.settings.adminsOnly")}</p>
         )}
       </main>
     </div>
