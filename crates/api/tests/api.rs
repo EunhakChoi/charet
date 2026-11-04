@@ -1,8 +1,10 @@
 //! Black-box tests of the router, plus the contract check.
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, SystemTime};
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -18,13 +20,39 @@ use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
+/// How long a folder of an earlier test run is kept: long enough that a run still going is never
+/// swept away, short enough that runs do not pile up.
+const KEEP_RUNS: Duration = Duration::from_mins(15);
+
+/// Where this run's engines keep their files: a folder of its own in cargo's scratch folder for
+/// tests (`target/tmp`, which `cargo clean` empties), not in the machine's temp folder, where
+/// every run used to leave twenty folders behind. Folders of earlier runs are removed on the way.
+fn scratch() -> &'static Path {
+    static DIR: OnceLock<PathBuf> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let base = Path::new(env!("CARGO_TARGET_TMPDIR"));
+        for entry in std::fs::read_dir(base).into_iter().flatten().flatten() {
+            let old = entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("charet-api-")
+                && entry
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|at| SystemTime::now().duration_since(at).ok())
+                    .is_some_and(|age| age > KEEP_RUNS);
+            if old {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
+        base.join(format!("charet-api-{}", std::process::id()))
+    })
+}
+
 fn engine(local_mode: bool) -> Engine {
     static NEXT: AtomicU32 = AtomicU32::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "charet-api-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
+    let root = scratch().join(NEXT.fetch_add(1, Ordering::Relaxed).to_string());
     let _ = std::fs::remove_dir_all(&root);
     let db = Arc::new(Db::memory().unwrap());
     Engine::new(
@@ -754,7 +782,7 @@ async fn manifest_files_and_web() {
     assert_eq!(commit.as_deref(), files["commit"].as_str());
 
     // The app: API paths stay JSON 404s, other paths fall back to the web tool.
-    let web = std::env::temp_dir().join(format!("charet-web-{}", std::process::id()));
+    let web = scratch().join("web");
     std::fs::create_dir_all(web.join("assets")).unwrap();
     std::fs::write(web.join("index.html"), "<!doctype html>app").unwrap();
     std::fs::write(web.join("assets/a.js"), "x").unwrap();
