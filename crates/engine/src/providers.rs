@@ -36,7 +36,12 @@ const OPENAI_AUTHORIZE: &str = "https://auth.openai.com/oauth/authorize";
 /// Where `ChatGPT`'s sign-in page sends the browser (one of the two addresses registered for the
 /// client). Nothing listens there: the person copies the address the browser ends on.
 pub const OPENAI_REDIRECT: &str = "http://localhost:1455/auth/callback";
-const OPENAI_SCOPES: &str = "openid profile email offline_access";
+/// What the provider's own tool asks for: sign-in, a refresh token, and the connector scopes a Codex
+/// run's access token needs for connector-backed tools.
+const OPENAI_SCOPES: &str =
+    "openid profile email offline_access api.connectors.read api.connectors.invoke";
+/// `ChatGPT` may append this onboarding note to the otherwise exact `state` of the address.
+const OPENAI_STATE_SUFFIX: &str = ".onboarding_entrypoint=life_sciences";
 /// Who is asking, as the sign-in page is told.
 const OPENAI_ORIGINATOR: &str = "charet";
 
@@ -499,7 +504,10 @@ impl Engine {
                 "paste the code or the address the sign-in ends with".into(),
             ));
         };
-        if state.as_deref().is_some_and(|s| s != expected) {
+        if state
+            .as_deref()
+            .is_some_and(|s| !same_sign_in(provider, s, &expected))
+        {
             return Err(EngineError::Invalid(
                 "that code belongs to another sign-in; start again".into(),
             ));
@@ -926,6 +934,39 @@ fn openai_authorize_url(verifier: &str, state: &str) -> String {
     )
 }
 
+/// Whether the `state` that came back is the one this sign-in was given. `ChatGPT` may add a note
+/// to its own (exactly [`OPENAI_STATE_SUFFIX`]); every other difference is another sign-in.
+fn same_sign_in(provider: ProviderId, got: &str, expected: &str) -> bool {
+    got == expected
+        || (provider == ProviderId::Openai
+            && got.strip_suffix(OPENAI_STATE_SUFFIX) == Some(expected))
+}
+
+/// `%XX` escapes undone (what a browser's address bar shows for a value the provider encoded).
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let escaped = (bytes[i] == b'%')
+            .then(|| bytes.get(i + 1..i + 3))
+            .flatten()
+            .and_then(|hex| std::str::from_utf8(hex).ok())
+            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+        match escaped {
+            Some(byte) => {
+                out.push(byte);
+                i += 3;
+            }
+            None => {
+                out.push(bytes[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// What the person pasted: `code#state`, an address with `?code=…&state=…`, a query string, or
 /// the bare code.
 pub(crate) fn parse_authorization_input(input: &str) -> (Option<String>, Option<String>) {
@@ -938,8 +979,8 @@ pub(crate) fn parse_authorization_input(input: &str) -> (Option<String>, Option<
         let mut state = None;
         for pair in text.split('&') {
             match pair.split_once('=') {
-                Some(("code", v)) => code = Some(v.to_owned()),
-                Some(("state", v)) => state = Some(v.to_owned()),
+                Some(("code", v)) => code = Some(percent_decode(v)),
+                Some(("state", v)) => state = Some(percent_decode(v)),
                 _ => {}
             }
         }
@@ -1177,6 +1218,10 @@ mod tests {
                 && url.contains("code_challenge_method=S256")
                 && url.contains("codex_cli_simplified_flow=true"),
             "{url}"
+        );
+        assert!(
+            url.contains("offline_access%20api.connectors.read%20api.connectors.invoke"),
+            "the scopes the provider's own tool asks for: {url}"
         );
 
         // The address of another sign-in is refused, and the sign-in stays.
@@ -1505,6 +1550,40 @@ mod tests {
     }
 
     #[test]
+    fn chatgpt_may_add_its_onboarding_note_to_the_state_and_nothing_else_may_differ() {
+        let sign_in = |engine: &Engine, admin: &Actor, provider: ProviderId, state_suffix: &str| {
+            let url = engine
+                .start_provider_sign_in(admin, provider)
+                .unwrap()
+                .url
+                .unwrap();
+            let state = param_of(&url, "state");
+            let pasted = format!("{OPENAI_REDIRECT}?code=c&state={state}{state_suffix}");
+            engine.finish_provider_sign_in(admin, provider, &pasted)
+        };
+        let note = ".onboarding_entrypoint=life_sciences";
+        let encoded = ".onboarding_entrypoint%3Dlife_sciences";
+        for suffix in [note, encoded] {
+            let (engine, fakes, admin, _) = setup();
+            fakes.net.issue(&chatgpt_token("acct-1"));
+            let done = sign_in(&engine, &admin, ProviderId::Openai, suffix).unwrap();
+            assert_eq!(done.state, SignInState::SignedIn, "{suffix}");
+        }
+        // Any other addition is another sign-in's, and the note is ChatGPT's alone.
+        let (engine, fakes, admin, _) = setup();
+        fakes.net.issue(&chatgpt_token("acct-1"));
+        for other in [".other", "x", ".onboarding_entrypoint=other"] {
+            let refused = sign_in(&engine, &admin, ProviderId::Openai, other);
+            assert!(matches!(refused, Err(EngineError::Invalid(_))), "{other}");
+            engine
+                .cancel_provider_sign_in(&admin, ProviderId::Openai)
+                .unwrap();
+        }
+        let claude = sign_in(&engine, &admin, ProviderId::Anthropic, note);
+        assert!(matches!(claude, Err(EngineError::Invalid(_))));
+    }
+
+    #[test]
     fn a_provider_has_one_sign_in_at_a_time() {
         let (engine, fakes, admin, _) = setup();
         let url = engine
@@ -1757,6 +1836,13 @@ mod tests {
             some("abc", Some("xyz"))
         );
         assert_eq!(parse_authorization_input("abc"), some("abc", None));
+        assert_eq!(
+            parse_authorization_input(
+                "http://localhost:1455/auth/callback?code=a%2Fb&state=s.x%3Dy#frag"
+            ),
+            some("a/b", Some("s.x=y")),
+            "escapes in an address are undone"
+        );
         assert_eq!(
             parse_authorization_input("code=abc&state=xyz"),
             some("abc", Some("xyz"))
