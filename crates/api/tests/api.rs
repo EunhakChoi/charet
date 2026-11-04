@@ -1,8 +1,10 @@
 //! Black-box tests of the router, plus the contract check.
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
+use std::fs::{File, OpenOptions};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -18,13 +20,58 @@ use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
+/// What a run holds a lock on while it lives (see [`scratch`]).
+const LOCK: &str = ".lock";
+
+/// Where this run's engines keep their files: a folder of its own in cargo's scratch folder for
+/// tests (`target/tmp`, which `cargo clean` empties), not in the machine's temp folder, where
+/// every run used to leave twenty folders behind.
+///
+/// A run holds a lock on a file in its folder for as long as it lives (the OS drops the lock when
+/// the process ends, however it ends). A run that starts removes the folders of runs whose lock
+/// nobody holds, so a run still going is never swept away, however long it takes, and finished
+/// ones do not pile up.
+fn scratch() -> &'static Path {
+    static DIR: OnceLock<PathBuf> = OnceLock::new();
+    static HELD: OnceLock<File> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let base = Path::new(env!("CARGO_TARGET_TMPDIR"));
+        let mine = base.join(format!("charet-api-{}", std::process::id()));
+        std::fs::create_dir_all(&mine).unwrap();
+        // The lock is taken before the file gets its name, so a run that sweeps never meets it
+        // unlocked: it either does not see the file yet or finds it held.
+        let _ = std::fs::remove_file(mine.join(LOCK));
+        let pending = mine.join(format!("{LOCK}.new"));
+        let held = File::create(&pending).unwrap();
+        held.lock().unwrap();
+        std::fs::rename(&pending, mine.join(LOCK)).unwrap();
+        HELD.set(held).unwrap();
+        for entry in std::fs::read_dir(base).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path == mine
+                || !entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("charet-api-")
+            {
+                continue;
+            }
+            // A folder without a lock file is one a run is only now making: left alone.
+            let over = OpenOptions::new()
+                .write(true)
+                .open(path.join(LOCK))
+                .is_ok_and(|file| file.try_lock().is_ok());
+            if over {
+                let _ = std::fs::remove_dir_all(&path);
+            }
+        }
+        mine
+    })
+}
+
 fn engine(local_mode: bool) -> Engine {
     static NEXT: AtomicU32 = AtomicU32::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "charet-api-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
+    let root = scratch().join(NEXT.fetch_add(1, Ordering::Relaxed).to_string());
     let _ = std::fs::remove_dir_all(&root);
     let db = Arc::new(Db::memory().unwrap());
     Engine::new(
@@ -754,7 +801,7 @@ async fn manifest_files_and_web() {
     assert_eq!(commit.as_deref(), files["commit"].as_str());
 
     // The app: API paths stay JSON 404s, other paths fall back to the web tool.
-    let web = std::env::temp_dir().join(format!("charet-web-{}", std::process::id()));
+    let web = scratch().join("web");
     std::fs::create_dir_all(web.join("assets")).unwrap();
     std::fs::write(web.join("index.html"), "<!doctype html>app").unwrap();
     std::fs::write(web.join("assets/a.js"), "x").unwrap();

@@ -261,9 +261,25 @@ mod tests {
 
     use super::*;
 
+    /// The calls a stand-in CLI recorded. The folder it lives in goes away with this, so a test
+    /// run leaves nothing in the temp folder.
+    struct Calls(PathBuf);
+
+    impl Calls {
+        fn read(&self) -> String {
+            std::fs::read_to_string(self.0.join("calls")).unwrap()
+        }
+    }
+
+    impl Drop for Calls {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
     /// A stand-in CLI: answers `status --json` with `status`, records every call, and fails
     /// `funnel` with an admin-console link.
-    fn fake(status: &str) -> (Tailscale, PathBuf) {
+    fn fake(status: &str) -> (Tailscale, Calls) {
         let dir = std::env::temp_dir().join(format!(
             "charet-tunnel-{}-{}",
             std::process::id(),
@@ -292,7 +308,7 @@ mod tests {
                 socket: None,
                 target: "http://127.0.0.1:5284".into(),
             },
-            log,
+            Calls(dir),
         )
     }
 
@@ -302,7 +318,7 @@ mod tests {
 
     #[test]
     fn serve_on_tailscale_uses_https_and_funnel_passes_on_the_enable_link() {
-        let (tailscale, log) = fake(TAILSCALE);
+        let (tailscale, recorded) = fake(TAILSCALE);
         assert_eq!(
             tailscale.open(ShareMode::Tailscale).unwrap(),
             "https://kim.tail1.ts.net"
@@ -313,7 +329,7 @@ mod tests {
             "{err}"
         );
         tailscale.close(ShareMode::Tailscale).unwrap();
-        let calls = std::fs::read_to_string(log).unwrap();
+        let calls = recorded.read();
         assert!(
             calls.contains("serve --bg --yes --https=443 http://127.0.0.1:5284"),
             "{calls}"
@@ -328,16 +344,12 @@ mod tests {
 
     #[test]
     fn headscale_shares_over_http_inside_the_tailnet_and_has_no_funnel() {
-        let (tailscale, log) = fake(HEADSCALE);
+        let (tailscale, recorded) = fake(HEADSCALE);
         assert_eq!(
             tailscale.open(ShareMode::Tailscale).unwrap(),
             "http://kim.hs.example"
         );
-        assert!(
-            std::fs::read_to_string(log)
-                .unwrap()
-                .contains("serve --bg --yes --http=80")
-        );
+        assert!(recorded.read().contains("serve --bg --yes --http=80"));
         let modes = tailscale.modes();
         assert!(modes[0].available);
         assert!(!modes[1].available && modes[1].detail.contains("Headscale"));

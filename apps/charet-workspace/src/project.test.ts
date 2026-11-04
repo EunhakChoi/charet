@@ -52,18 +52,17 @@ test("finds charet-only dependencies in .charet/package.json, which need a lockf
     ".charet/package-lock.json": "",
   });
   const noLock = tree({ "pnpm-lock.yaml": "", "package.json": "{}", ".charet/package.json": "{}" });
+  const bare = tree({ "pnpm-lock.yaml": "", "package.json": "{}" });
   try {
     assert.deepEqual(readLayout(root).charetPackage, {
       dir: join(root, ".charet"),
       manager: "npm",
     });
-    assert.equal(
-      readLayout(tree({ "pnpm-lock.yaml": "", "package.json": "{}" })).charetPackage,
-      undefined,
-    );
+    assert.equal(readLayout(bare).charetPackage, undefined);
     assert.throws(() => readLayout(noLock), /no lockfile next to .charet\/package.json/);
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(noLock, { recursive: true, force: true });
+    rmSync(bare, { recursive: true, force: true });
   }
 });
