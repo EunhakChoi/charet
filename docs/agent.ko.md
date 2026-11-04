@@ -25,8 +25,9 @@ docker compose -f compose.yaml -f compose.agent.yaml up -d --build
   - Provider 가 key 가 동작하는지 알려줌. 동작하는 key 만 **저장** 가능.
   - Server key 로 암호화해 저장, 끝 4자리만 표시.
 - **Claude / ChatGPT 로 로그인**: 새 창에서 provider 의 로그인 page 가 열림.
-  - ChatGPT: page 에 표시된 code 를 provider page 에 입력. 완료는 charet 이 알아서 감지.
   - Claude: 로그인 후 provider page 에 표시된 code 를 charet 에 붙여넣기.
+  - ChatGPT: 로그인 후 새 창이 열리지 않는 page 로 끝남 (주소가 `http://localhost:1455/auth/callback` 으로 시작). 정상 동작이므로 주소창의 주소를 복사해 charet 에 붙여넣기.
+    - provider 자체 command line tool 의 browser 로그인 방식이라 workspace 의 장치 코드 설정과 무관.
   - 로그인 정보는 암호화해 보관. Run 시작 전에 갱신하고, run container 에는 수명이 짧은 access token 만 전달. Refresh token 은 server 밖으로 나가지 않음.
   - Provider 당 계정 1개 (모든 팀원의 web agent 공용). Sign-in 은 한 번에 1개.
     - **취소**: 진행 중인 sign-in 만 끝냄. 로그인된 계정은 그대로.

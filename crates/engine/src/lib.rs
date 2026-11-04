@@ -50,9 +50,8 @@ pub use ports::{
 pub use preview::{PREVIEW_PREFIX, Preview, PreviewSettings, preview_path};
 pub use projects::{Checkout, Import};
 pub use providers::{
-    ANTHROPIC_REDIRECT, DeviceAuth, DevicePoll, KeyCheck, KeyInfo, KeyProblem, OAuthStatus,
-    OPENAI_DEVICE_REDIRECT, OPENAI_DEVICE_URL, Provider, ProviderError, ProviderId, ProviderNet,
-    RunLogin, SignInMethod, SignInState, Tokens, percent_encode,
+    ANTHROPIC_REDIRECT, KeyCheck, KeyInfo, KeyProblem, OAuthStatus, OPENAI_REDIRECT, Provider,
+    ProviderError, ProviderId, ProviderNet, RunLogin, SignInState, Tokens, percent_encode,
 };
 pub use sharing::{ShareMode, ShareRequest, Sharing, SharingStatus};
 pub use sheet::SheetItem;

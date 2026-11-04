@@ -1779,21 +1779,6 @@ impl charet_engine::ProviderNet for StubNet {
             models: ok.then_some(3),
         }
     }
-    fn openai_device_start(
-        &self,
-    ) -> Result<charet_engine::DeviceAuth, charet_engine::ProviderError> {
-        Ok(charet_engine::DeviceAuth {
-            device_auth_id: "dev".into(),
-            user_code: "WXYZ-0001".into(),
-            interval_secs: 5,
-        })
-    }
-    fn openai_device_poll(
-        &self,
-        _: &charet_engine::DeviceAuth,
-    ) -> Result<charet_engine::DevicePoll, charet_engine::ProviderError> {
-        Ok(charet_engine::DevicePoll::Pending)
-    }
     fn openai_exchange(
         &self,
         _: &str,
@@ -1936,17 +1921,25 @@ async fn admins_check_and_save_provider_keys() {
 async fn admins_sign_in_to_providers() {
     let engine = engine_with_providers();
     let base = "/api/admin/agent/providers";
-    // A device sign-in shows the code to type; cancelling leaves nobody signed in.
+    // A sign-in gives the provider's page to open; cancelling leaves nobody signed in.
     let (status, waiting) = post(engine.clone(), &format!("{base}/openai/oauth"), &json!({})).await;
     assert_eq!(status, StatusCode::OK, "{waiting}");
-    assert_eq!(
-        (
-            waiting["state"].as_str(),
-            waiting["method"].as_str(),
-            waiting["userCode"].as_str()
-        ),
-        (Some("waiting"), Some("device"), Some("WXYZ-0001"))
+    assert_eq!(waiting["state"], "waiting");
+    assert!(
+        waiting["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("https://auth.openai.com/oauth/authorize?"),
+        "{waiting}"
     );
+    // The address of another sign-in is refused, and the sign-in stays.
+    let (status, _) = post(
+        engine.clone(),
+        &format!("{base}/openai/oauth/code"),
+        &json!({ "code": "http://localhost:1455/auth/callback?code=c&state=other" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
     // One sign-in at a time per provider.
     let (status, again) = post(engine.clone(), &format!("{base}/openai/oauth"), &json!({})).await;
     assert_eq!(status, StatusCode::CONFLICT, "{again}");

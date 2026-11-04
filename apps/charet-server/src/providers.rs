@@ -1,13 +1,12 @@
 //! The calls to the model providers behind `ProviderNet`: asking whether an API key works, and the
-//! two sign-in flows of the vendors' own command line tools (`ChatGPT` device code, Claude pasted
-//! code), with the token renewals. The rules live in `charet_engine`; this only speaks HTTP and
+//! two sign-in flows of the vendors' own command line tools (`ChatGPT` and Claude both hand the
+//! person a code or an address to paste back), with the token renewals. The rules live in `charet_engine`; this only speaks HTTP and
 //! maps what comes back.
 
 use std::time::Duration;
 
 use charet_engine::{
-    DeviceAuth, DevicePoll, KeyCheck, KeyProblem, ProviderError, ProviderId, ProviderNet, Tokens,
-    percent_encode,
+    KeyCheck, KeyProblem, ProviderError, ProviderId, ProviderNet, Tokens, percent_encode,
 };
 use serde_json::{Value, json};
 
@@ -146,34 +145,6 @@ impl ProviderNet for ProviderClient {
                 models: None,
             },
         }
-    }
-
-    fn openai_device_start(&self) -> Result<DeviceAuth, ProviderError> {
-        let url = format!(
-            "{}/api/accounts/deviceauth/usercode",
-            self.endpoints.openai_auth
-        );
-        let reply = self
-            .post_json(&url, &json!({ "client_id": OPENAI_CLIENT_ID }))
-            .map_err(ProviderError::Unavailable)?;
-        parse_device_start(reply.status, &reply.body)
-    }
-
-    fn openai_device_poll(&self, device: &DeviceAuth) -> Result<DevicePoll, ProviderError> {
-        let url = format!(
-            "{}/api/accounts/deviceauth/token",
-            self.endpoints.openai_auth
-        );
-        let reply = self
-            .post_json(
-                &url,
-                &json!({
-                    "device_auth_id": device.device_auth_id,
-                    "user_code": device.user_code,
-                }),
-            )
-            .map_err(ProviderError::Unavailable)?;
-        Ok(parse_device_poll(reply.status, &reply.body))
     }
 
     fn openai_exchange(
@@ -336,76 +307,6 @@ fn parse_tokens(status: u16, body: &str) -> Result<Tokens, ProviderError> {
     })
 }
 
-fn parse_device_start(status: u16, body: &str) -> Result<DeviceAuth, ProviderError> {
-    if status == 404 {
-        return Err(ProviderError::Rejected(
-            "ChatGPT device sign-in is not available".into(),
-        ));
-    }
-    if !(200..300).contains(&status) {
-        return Err(ProviderError::Unavailable(format!(
-            "status {status}: {}",
-            error_text(body)
-        )));
-    }
-    let json: Value = serde_json::from_str(body)
-        .map_err(|_| ProviderError::Unavailable("the provider's answer is not JSON".into()))?;
-    let text = |name: &str| {
-        json.get(name)
-            .and_then(Value::as_str)
-            .filter(|t| !t.is_empty())
-    };
-    let (Some(id), Some(code)) = (text("device_auth_id"), text("user_code")) else {
-        return Err(ProviderError::Unavailable(
-            "the provider's device code answer is missing fields".into(),
-        ));
-    };
-    // The interval comes as a number or as text.
-    let interval = match json.get("interval") {
-        Some(Value::Number(n)) => n.as_u64(),
-        Some(Value::String(s)) => s.trim().parse().ok(),
-        _ => None,
-    };
-    Ok(DeviceAuth {
-        device_auth_id: id.to_owned(),
-        user_code: code.to_owned(),
-        interval_secs: interval.unwrap_or(5),
-    })
-}
-
-/// One look at the device sign-in: not yet (403/404 or a pending code), slow down, done, failed.
-fn parse_device_poll(status: u16, body: &str) -> DevicePoll {
-    if (200..300).contains(&status) {
-        let json: Value = serde_json::from_str(body).unwrap_or(Value::Null);
-        let text = |name: &str| {
-            json.get(name)
-                .and_then(Value::as_str)
-                .filter(|t| !t.is_empty())
-        };
-        return match (text("authorization_code"), text("code_verifier")) {
-            (Some(code), Some(verifier)) => DevicePoll::Done {
-                authorization_code: code.to_owned(),
-                code_verifier: verifier.to_owned(),
-            },
-            _ => DevicePoll::Failed("the provider's sign-in answer is missing fields".into()),
-        };
-    }
-    if status == 403 || status == 404 {
-        return DevicePoll::Pending;
-    }
-    let json: Value = serde_json::from_str(body).unwrap_or(Value::Null);
-    let code = match json.get("error") {
-        Some(Value::String(code)) => Some(code.as_str()),
-        Some(error) => error.get("code").and_then(Value::as_str),
-        None => None,
-    };
-    match code {
-        Some("deviceauth_authorization_pending" | "authorization_pending") => DevicePoll::Pending,
-        Some("slow_down") => DevicePoll::SlowDown,
-        _ => DevicePoll::Failed(format!("status {status}: {}", error_text(body))),
-    }
-}
-
 /// A short line from an error answer: its description or message, else the start of the body.
 fn error_text(body: &str) -> String {
     let json: Value = serde_json::from_str(body).unwrap_or(Value::Null);
@@ -562,6 +463,26 @@ mod tests {
     }
 
     #[test]
+    fn a_pasted_chatgpt_code_is_exchanged_with_the_redirect_it_was_given_for() {
+        let (url, request) = serve_once(
+            200,
+            r#"{"access_token":"a","refresh_token":"r","id_token":"i","expires_in":3600}"#,
+        );
+        let tokens = client(&url)
+            .openai_exchange("c 1", "v", "http://localhost:1455/auth/callback")
+            .unwrap();
+        assert_eq!(tokens.id_token.as_deref(), Some("i"));
+        let request = request.join().unwrap();
+        assert!(request.starts_with("POST /oauth/token "), "{request}");
+        assert!(
+            request.ends_with(
+                "grant_type=authorization_code&client_id=app_EMoamEEZ73f0CkXaXp7hrann&code=c%201&code_verifier=v&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback"
+            ),
+            "{request}"
+        );
+    }
+
+    #[test]
     fn a_refresh_sends_the_form_the_provider_expects() {
         let (url, request) = serve_once(
             200,
@@ -604,60 +525,5 @@ mod tests {
                 "code_verifier": "v",
             })
         );
-    }
-
-    #[test]
-    fn the_device_sign_in_is_read_step_by_step() {
-        let start = parse_device_start(
-            200,
-            r#"{"device_auth_id":"d","user_code":"AB-12","interval":"7"}"#,
-        )
-        .unwrap();
-        assert_eq!(
-            (
-                start.device_auth_id.as_str(),
-                start.user_code.as_str(),
-                start.interval_secs
-            ),
-            ("d", "AB-12", 7)
-        );
-        assert_eq!(
-            parse_device_start(200, r#"{"device_auth_id":"d","user_code":"x"}"#)
-                .unwrap()
-                .interval_secs,
-            5,
-            "a missing interval is 5 seconds"
-        );
-        assert!(matches!(
-            parse_device_start(404, ""),
-            Err(ProviderError::Rejected(_))
-        ));
-
-        assert_eq!(parse_device_poll(403, ""), DevicePoll::Pending);
-        assert_eq!(
-            parse_device_poll(
-                400,
-                r#"{"error":{"code":"deviceauth_authorization_pending"}}"#
-            ),
-            DevicePoll::Pending
-        );
-        assert_eq!(
-            parse_device_poll(400, r#"{"error":"slow_down"}"#),
-            DevicePoll::SlowDown
-        );
-        assert!(
-            matches!(parse_device_poll(400, r#"{"error":"expired"}"#), DevicePoll::Failed(m) if m.contains("expired"))
-        );
-        assert_eq!(
-            parse_device_poll(200, r#"{"authorization_code":"c","code_verifier":"v"}"#),
-            DevicePoll::Done {
-                authorization_code: "c".into(),
-                code_verifier: "v".into()
-            }
-        );
-        assert!(matches!(
-            parse_device_poll(200, "{}"),
-            DevicePoll::Failed(_)
-        ));
     }
 }

@@ -766,16 +766,6 @@ export function useProviderActions() {
   };
 }
 
-/** Where a sign-in stands; polled while its window is open. */
-export function useSignInStatus(id: ProviderId, waiting: boolean) {
-  return useQuery({
-    queryKey: ["admin", "providers", id, "oauth"],
-    enabled: waiting,
-    refetchInterval: waiting ? 2000 : false,
-    queryFn: () => unwrap(api.GET("/api/admin/agent/providers/{id}/oauth", provider(id))),
-  });
-}
-
 export type Look = { image: string; elements: Element[]; issues: string[] };
 
 /**
