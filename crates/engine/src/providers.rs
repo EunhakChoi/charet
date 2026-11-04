@@ -30,6 +30,8 @@ const LOGIN_TIMEOUT: u64 = 15 * 60;
 /// Extra seconds, beyond the longest a run may take, that a login must still have when a run
 /// starts: its container cannot renew the token itself (it never sees the refresh token).
 const RENEW_MARGIN: u64 = 5 * 60;
+/// How often the server calls [`Engine::providers_tick`], in seconds.
+pub const PROVIDERS_TICK_SECS: u64 = 5 * 60;
 
 const OPENAI_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const OPENAI_AUTHORIZE: &str = "https://auth.openai.com/oauth/authorize";
@@ -794,17 +796,53 @@ impl Engine {
         })
     }
 
-    /// The saved login with an access token good for a while, renewed when it is not.
+    /// The saved login with an access token good for a run, renewed when it is not.
     fn fresh_login(
         &self,
         config: &AgentConfig,
         provider: ProviderId,
     ) -> Result<Option<Login>, EngineError> {
-        let renew_within = config.run_limit_secs().saturating_add(RENEW_MARGIN);
+        let secs = config.run_limit_secs().saturating_add(RENEW_MARGIN);
+        self.login_lasting(provider, secs)
+    }
+
+    /// Renews the logins runs use that would not last until the next tick and a run after it, so a
+    /// run seldom has to wait for a renewal itself (it still renews when it must). The server calls
+    /// this every [`PROVIDERS_TICK_SECS`]. Every provider is tried; the first failure is returned
+    /// (a provider that cannot be reached is tried again next time).
+    pub fn providers_tick(&self) -> Result<(), EngineError> {
+        if self.providers.is_none() {
+            return Ok(());
+        }
+        let config = self.agent_config();
+        let secs = config
+            .run_limit_secs()
+            .saturating_add(RENEW_MARGIN)
+            .saturating_add(PROVIDERS_TICK_SECS);
+        let mut first_failure = Ok(());
+        for provider in ProviderId::ALL {
+            if !provider.has_sign_in() {
+                continue;
+            }
+            let (has_key, signed_in) = self.provider_credentials(&config, provider)?;
+            if self.using(provider, has_key, signed_in)? != "oauth" {
+                continue;
+            }
+            if let Err(error) = self.login_lasting(provider, secs)
+                && first_failure.is_ok()
+            {
+                first_failure = Err(error);
+            }
+        }
+        first_failure
+    }
+
+    /// The saved login with an access token that lasts `secs` more, renewed when it would not.
+    fn login_lasting(&self, provider: ProviderId, secs: u64) -> Result<Option<Login>, EngineError> {
         let Some(login) = self.stored_login(provider)? else {
             return Ok(None);
         };
-        if login.expires > now().saturating_add(renew_within) {
+        if login.expires > now().saturating_add(secs) {
             return Ok(Some(login));
         }
         let providers = self.provider_net()?;
@@ -813,7 +851,7 @@ impl Engine {
         let Some(login) = self.stored_login(provider)? else {
             return Ok(None);
         };
-        if login.expires > now().saturating_add(renew_within) {
+        if login.expires > now().saturating_add(secs) {
             return Ok(Some(login));
         }
         let renewed = match provider {
@@ -1578,6 +1616,64 @@ mod tests {
         }
         let claude = sign_in(&engine, &admin, ProviderId::Anthropic, note);
         assert!(matches!(claude, Err(EngineError::Invalid(_))));
+    }
+
+    #[test]
+    fn a_tick_renews_the_login_runs_use_before_a_run_would_have_to() {
+        let (engine, fakes, admin, _) = setup();
+        sign_in_chatgpt(&engine, &fakes, &admin, "acct-1");
+        let config = engine.agent_config();
+        let window = config.run_limit_secs() + RENEW_MARGIN;
+
+        // Enough for a run now, and for the next tick as well: left alone.
+        age_login(
+            &engine,
+            ProviderId::Openai,
+            window + PROVIDERS_TICK_SECS + 60,
+        );
+        engine.providers_tick().unwrap();
+        assert_eq!(fakes.net.refreshes(), 0);
+
+        // Enough for a run now, but it would not be by the next tick: renewed ahead of time.
+        age_login(
+            &engine,
+            ProviderId::Openai,
+            window + PROVIDERS_TICK_SECS - 60,
+        );
+        engine.run_credential(&config, AgentKind::Codex).unwrap();
+        assert_eq!(fakes.net.refreshes(), 0, "a run does not need it yet");
+        engine.providers_tick().unwrap();
+        assert_eq!(fakes.net.refreshes(), 1);
+        engine.providers_tick().unwrap();
+        assert_eq!(fakes.net.refreshes(), 1, "and then it is fresh");
+    }
+
+    #[test]
+    fn a_tick_leaves_a_login_alone_when_runs_use_the_key() {
+        let (engine, fakes, admin, _) = setup();
+        engine
+            .save_provider_key(&admin, ProviderId::Openai, "sk-good-wxyz")
+            .unwrap();
+        sign_in_chatgpt(&engine, &fakes, &admin, "acct-1");
+        assert_eq!(engine.providers(&admin).unwrap()[1].using, "key");
+        age_login(&engine, ProviderId::Openai, 10);
+        engine.providers_tick().unwrap();
+        assert_eq!(fakes.net.refreshes(), 0);
+    }
+
+    #[test]
+    fn a_tick_that_cannot_renew_says_so_and_keeps_the_login() {
+        let (engine, fakes, admin, _) = setup();
+        sign_in_chatgpt(&engine, &fakes, &admin, "acct-1");
+        age_login(&engine, ProviderId::Openai, 10);
+        fakes.net.refuse_refresh("invalid_grant");
+        let failed = engine.providers_tick();
+        assert!(
+            matches!(&failed, Err(EngineError::Unavailable(m)) if m.contains("sign in again")),
+            "{failed:?}"
+        );
+        // Nothing is thrown away: a later tick (or a run) tries again.
+        assert!(engine.stored_login(ProviderId::Openai).unwrap().is_some());
     }
 
     #[test]

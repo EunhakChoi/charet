@@ -31,8 +31,9 @@ OpenAI for Codex) use an API key, a subscription sign-in, or both:
     with `http://localhost:1455/auth/callback`). That is expected: copy the address from the
     address bar and paste it into charet. This is the browser login of the provider's own command
     line tool, so it does not depend on a workspace's device code setting.
-  - charet keeps the login encrypted, renews it before each run, and hands the run's container only
-    the short-lived access token. The refresh token never leaves the server.
+  - charet keeps the login encrypted, renews it before each run (and every 5 minutes in the
+    background, when the one in use would not last until the next check and a run), and hands the
+    run's container only the short-lived access token. The refresh token never leaves the server.
   - One account per provider, shared by everyone's web agent. One sign-in at a time: **Cancel**
     ends the one that waits and nothing else. **Sign in with another account** replaces the
     account when the new sign-in succeeds (a failed one leaves it). **Sign out** forgets the

@@ -115,13 +115,7 @@ async fn run(config: Config, admin_token: bool) -> Result<(), String> {
     }
     let first_token = engine.owner_announcement().map_err(|e| e.to_string())?;
     let engine = with_sharing(engine, &config).await?;
-    if config.update_check {
-        update::spawn(engine.clone());
-    }
-    archive_idle_drafts(engine.clone());
-    if config.agent.is_some() {
-        follow_agent_runs(engine.clone());
-    }
+    start_jobs(&engine, &config);
     let listener = tokio::net::TcpListener::bind(config.bind)
         .await
         .map_err(|e| format!("cannot listen on {}: {e}", config.bind))?;
@@ -303,6 +297,18 @@ async fn shutdown() {
     }
 }
 
+/// The jobs that run beside the server for as long as it does.
+fn start_jobs(engine: &Engine, config: &Config) {
+    if config.update_check {
+        update::spawn(engine.clone());
+    }
+    archive_idle_drafts(engine.clone());
+    if config.agent.is_some() {
+        follow_agent_runs(engine.clone());
+        keep_logins_fresh(engine.clone());
+    }
+}
+
 /// Once an hour, archives drafts nobody touched for two weeks.
 fn archive_idle_drafts(engine: Engine) {
     tokio::spawn(async move {
@@ -319,6 +325,30 @@ fn archive_idle_drafts(engine: Engine) {
                 eprintln!("charet-server: cannot archive idle drafts: {error}");
             }
             tokio::time::sleep(std::time::Duration::from_hours(1)).await;
+        }
+    });
+}
+
+/// Every few minutes, renews the subscription logins the web agent runs on before a run needs them.
+fn keep_logins_fresh(engine: Engine) {
+    tokio::spawn(async move {
+        let mut last_error = String::new();
+        loop {
+            let run = engine.clone();
+            if let Ok(Err(error)) = tokio::task::spawn_blocking(move || run.providers_tick()).await
+            {
+                let error = error.to_string();
+                if error != last_error {
+                    eprintln!("charet-server: web agent logins: {error}");
+                }
+                last_error = error;
+            } else {
+                last_error.clear();
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(
+                charet_engine::PROVIDERS_TICK_SECS,
+            ))
+            .await;
         }
     });
 }
