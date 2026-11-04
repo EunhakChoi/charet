@@ -507,6 +507,8 @@
   "web.providers.signedIn": "{account} 로 로그인됨",
   "web.providers.signedInPlain": "로그인됨",
   "web.providers.signOut": "로그아웃",
+  "web.providers.dismiss": "닫기",
+  "web.providers.switchAccount": "다른 계정으로 로그인",
   "web.providers.popupBlocked": "브라우저가 로그인 창을 막았어요. 이 페이지의 팝업을 허용하고 다시 해보세요.",
   "web.providers.failed": "로그인에 실패했어요: {error}",
   "web.providers.use": "사용할 방식",

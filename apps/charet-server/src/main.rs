@@ -172,6 +172,7 @@ fn with_agents(engine: Engine, config: &Config) -> Engine {
                     env_keys: agent.keys.clone(),
                     script: agent.script,
                     max_running: agent.max_running,
+                    run_minutes: agent.run_minutes,
                 },
             )
             .with_providers(Arc::new(ProviderClient::new())),

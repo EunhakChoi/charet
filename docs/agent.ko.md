@@ -28,13 +28,15 @@ docker compose -f compose.yaml -f compose.agent.yaml up -d --build
   - ChatGPT: page 에 표시된 code 를 provider page 에 입력. 완료는 charet 이 알아서 감지.
   - Claude: 로그인 후 provider page 에 표시된 code 를 charet 에 붙여넣기.
   - 로그인 정보는 암호화해 보관. Run 시작 전에 갱신하고, run container 에는 수명이 짧은 access token 만 전달. Refresh token 은 server 밖으로 나가지 않음.
+  - Provider 당 계정 1개 (모든 팀원의 web agent 공용). Sign-in 은 한 번에 1개.
+    - **취소**: 진행 중인 sign-in 만 끝냄. 로그인된 계정은 그대로.
+    - **다른 계정으로 로그인**: 새 sign-in 이 성공하면 계정 교체. 실패하면 기존 계정 유지.
+    - **로그아웃**: 저장된 로그인 삭제. Provider 쪽 token 은 철회하지 않음.
 - 둘 다 설정하면 agent 가 쓸 쪽을 선택.
 - `compose.yaml` 옆 `.env`: `CHARET_ANTHROPIC_API_KEY=…` (Claude) · `CHARET_OPENAI_API_KEY=…` (Codex) · `CHARET_GOOGLE_API_KEY=…` (추후용, 아직 Google 로 실행되는 agent 없음).
   Page 입력보다 우선, page 에서 변경 불가.
 
 같은 page 에서 기본 agent 와 agent 별 model 설정 (빈 값 = agent 기본 model).
-
-구독 로그인은 provider 자체 command line tool 의 로그인 방식을 사용함. 개인 설치 또는 소규모 신뢰 팀용. 팀 작업을 한 사람의 구독에 올리기 전에 provider 약관 확인 필요.
 
 ## 요청하기
 
@@ -80,7 +82,8 @@ docker compose -f compose.yaml -f compose.agent.yaml up -d --build
   - 불가: merge, comment, 다른 project 조회, 관리 API.
   - Push 는 *이름 · agent* 로 표시됨.
 - Vendor key (로그인이면 수명이 짧은 access token) 는 run container 안으로 전달됨 (agent 실행에 필요). charet 전용 key 를 따로 만들어 쓰면 그 key 만 폐기 가능.
-  - Run 은 로그인을 스스로 갱신할 수 없으므로, 남은 수명이 35분 미만이면 charet 이 먼저 갱신함.
+  - Run 은 로그인을 스스로 갱신할 수 없으므로, 남은 수명이 run 시간 제한 (기본 30분) + 5분 미만이면 charet 이 먼저 갱신함.
+  - 로그인 자체의 수명 (ChatGPT: 약 1시간) 보다 오래 걸리는 run 은 여전히 실패함.
 - Agent service 는 Docker socket (이 컴퓨터의 root 권한) 을 가짐. Run container 에서는 두 중계와 token 으로 보호된 API 외에는 접근 불가.
 
 ## 설정
@@ -90,7 +93,7 @@ docker compose -f compose.yaml -f compose.agent.yaml up -d --build
 | `CHARET_ANTHROPIC_API_KEY`, `CHARET_OPENAI_API_KEY`, `CHARET_GOOGLE_API_KEY` | `.env` | — | key (또는 설정 › Web agent) |
 | `CHARET_AGENT_MAX_RUNNING` | `.env` | 3 | 동시 실행 수 |
 | `CHARET_AGENT_NETWORK` | `.env` | `charet-agent-runs` | run 용 internal network |
-| `CHARET_AGENT_TIMEOUT_MIN` | agent service | 30 | 최대 실행 시간 |
+| `CHARET_AGENT_TIMEOUT_MIN` | `.env` | 30 | 최대 실행 시간 (분, 최대 35791). server 가 이보다 오래 가도록 로그인을 갱신 |
 | `CHARET_AGENT_MEMORY_GB`, `CHARET_AGENT_CPUS` | agent service | 4, 2 | run 당 |
 | `CHARET_AGENT_PRICES` | agent service | — | Codex 가격표 |
 | `CHARET_AGENT_ALLOW_HOSTS` | agent service | model API | proxy 허용 목록 |

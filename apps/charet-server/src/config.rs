@@ -71,6 +71,9 @@ pub struct AgentSetup {
     pub script: bool,
     /// `CHARET_AGENT_MAX_RUNNING` (default 3): runs at once.
     pub max_running: usize,
+    /// `CHARET_AGENT_TIMEOUT_MIN` (default 30): the longest a run may take, as `charet-agent`
+    /// enforces it. Logins are renewed to outlast it.
+    pub run_minutes: u64,
 }
 
 impl std::fmt::Debug for AgentSetup {
@@ -277,6 +280,18 @@ fn remote_bind(
     Ok(Some(addr))
 }
 
+/// The longest delay a Node timer holds (2^31-1 ms): `charet-agent` stops a run with one.
+const MAX_RUN_MS: f64 = 2_147_483_647.0;
+
+/// A run limit as whole minutes. The rule is `charet-agent`'s own, so both services accept the
+/// same `.env`: a number above zero that a timer can hold, and a fraction of a minute counts as the
+/// whole one.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // 0 < n <= 35,791.4
+fn whole_minutes(text: &str) -> Option<u64> {
+    let n: f64 = text.trim().parse().ok()?;
+    (n > 0.0 && n * 60_000.0 <= MAX_RUN_MS).then(|| n.ceil() as u64)
+}
+
 /// The web agent's settings; none without `CHARET_AGENT_URL`.
 fn agent_setup(env: &impl Fn(&str) -> Option<String>) -> Result<Option<AgentSetup>, String> {
     let Some(url) = env("CHARET_AGENT_URL").filter(|u| !u.trim().is_empty()) else {
@@ -305,6 +320,12 @@ fn agent_setup(env: &impl Fn(&str) -> Option<String>) -> Result<Option<AgentSetu
             .ok_or_else(|| format!("CHARET_AGENT_MAX_RUNNING {text:?} is not a count"))?,
         None => 3,
     };
+    let run_minutes = match env("CHARET_AGENT_TIMEOUT_MIN") {
+        Some(text) => whole_minutes(&text).ok_or_else(|| {
+            format!("CHARET_AGENT_TIMEOUT_MIN {text:?} is not a number of minutes")
+        })?,
+        None => charet_engine::DEFAULT_RUN_MINUTES,
+    };
     Ok(Some(AgentSetup {
         url: url.trim_end_matches('/').to_owned(),
         token: secret(env, "CHARET_AGENT_TOKEN")?,
@@ -312,6 +333,7 @@ fn agent_setup(env: &impl Fn(&str) -> Option<String>) -> Result<Option<AgentSetu
         keys,
         script: flag(env("CHARET_AGENT_SCRIPT").as_deref()),
         max_running,
+        run_minutes,
     }))
 }
 
@@ -502,6 +524,34 @@ mod tests {
     }
 
     #[test]
+    fn the_run_limit_follows_the_agent_service() {
+        let limit = |text: &str| {
+            config(
+                &[],
+                &[
+                    ("HOME", "/h"),
+                    ("CHARET_AGENT_URL", "http://agent:5290"),
+                    ("CHARET_AGENT_TIMEOUT_MIN", text),
+                ],
+            )
+            .map(|c| c.agent.unwrap().run_minutes)
+        };
+        assert_eq!(limit("90"), Ok(90));
+        assert_eq!(limit("2880"), Ok(2880));
+        assert_eq!(limit("35791"), Ok(35791), "the longest a timer holds");
+        assert!(
+            limit("35792").is_err() && limit("1e30").is_err(),
+            "longer than a timer holds: charet-agent would stop every run at once"
+        );
+        assert_eq!(
+            limit("0.5"),
+            Ok(1),
+            "a fraction of a minute counts as the whole one"
+        );
+        assert!(limit("0").is_err() && limit("soon").is_err());
+    }
+
+    #[test]
     fn the_web_agent_is_on_with_a_runner_url() {
         assert_eq!(config(&[], &[("HOME", "/h")]).unwrap().agent, None);
         let agent = config(
@@ -520,6 +570,10 @@ mod tests {
         assert_eq!(agent.bind, DEFAULT_AGENT_BIND.parse().unwrap());
         assert_eq!(agent.keys.get("claude").map(String::as_str), Some("sk-a"));
         assert!(agent.script && agent.max_running == 3);
+        assert_eq!(
+            agent.run_minutes, 30,
+            "the run limit defaults to charet-agent's"
+        );
         assert!(
             !format!("{agent:?}").contains("sk-a"),
             "keys stay out of logs"

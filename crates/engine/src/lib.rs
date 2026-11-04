@@ -25,8 +25,8 @@ use std::sync::{Arc, RwLock};
 use sharing::Live;
 
 pub use agents::{
-    AgentAccess, AgentChoice, AgentConfig, AgentSettingsChange, AgentStatus, Costs, PersonCost,
-    RunInput,
+    AgentAccess, AgentChoice, AgentConfig, AgentSettingsChange, AgentStatus, Costs,
+    DEFAULT_RUN_MINUTES, PersonCost, RunInput,
 };
 pub use branches::BranchDetail;
 pub use captures::{CaptureStatus, RenderResult, Rendered, THEMES};

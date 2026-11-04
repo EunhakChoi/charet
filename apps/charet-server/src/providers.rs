@@ -300,7 +300,8 @@ fn key_check(provider: ProviderId, status: u16, body: &str) -> KeyCheck {
     }
 }
 
-/// What a token endpoint answered.
+/// What a token endpoint answered. An answer without a refresh token (a renewal that keeps the
+/// old one) gives `refresh: None`; the engine decides whether that is acceptable.
 fn parse_tokens(status: u16, body: &str) -> Result<Tokens, ProviderError> {
     if !(200..300).contains(&status) {
         let message = format!("status {status}: {}", error_text(body));
@@ -319,9 +320,8 @@ fn parse_tokens(status: u16, body: &str) -> Result<Tokens, ProviderError> {
             .filter(|t| !t.is_empty())
             .map(str::to_owned)
     };
-    let (Some(access), Some(refresh), Some(expires_in)) = (
+    let (Some(access), Some(expires_in)) = (
         text("access_token"),
-        text("refresh_token"),
         json.get("expires_in").and_then(Value::as_u64),
     ) else {
         return Err(ProviderError::Unavailable(
@@ -330,7 +330,7 @@ fn parse_tokens(status: u16, body: &str) -> Result<Tokens, ProviderError> {
     };
     Ok(Tokens {
         access,
-        refresh,
+        refresh: text("refresh_token"),
         id_token: text("id_token"),
         expires_in,
     })
@@ -527,11 +527,11 @@ mod tests {
         assert_eq!(
             (
                 tokens.access.as_str(),
-                tokens.refresh.as_str(),
+                tokens.refresh.as_deref(),
                 tokens.id_token.as_deref(),
                 tokens.expires_in
             ),
-            ("a", "r", Some("i"), 3600)
+            ("a", Some("r"), Some("i"), 3600)
         );
         assert!(matches!(
             parse_tokens(400, r#"{"error":"invalid_grant","error_description":"used"}"#),
@@ -549,6 +549,16 @@ mod tests {
             parse_tokens(200, r#"{"access_token":"a"}"#),
             Err(ProviderError::Unavailable(_))
         ));
+    }
+
+    #[test]
+    fn an_answer_without_a_refresh_token_has_none() {
+        let tokens = parse_tokens(200, r#"{"access_token":"a2","expires_in":3600}"#).unwrap();
+        assert_eq!((tokens.access.as_str(), tokens.refresh), ("a2", None));
+
+        let (url, _) = serve_once(200, r#"{"access_token":"a2","expires_in":3600}"#);
+        let renewed = client(&url).anthropic_refresh("r1").unwrap();
+        assert_eq!(renewed.refresh, None);
     }
 
     #[test]

@@ -31,8 +31,12 @@ const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
 /// Earlier turns handed to a run as context.
 const HISTORY: usize = 20;
 
+/// The longest a run may take unless told otherwise, in minutes (`charet-agent`'s default too:
+/// `apps/charet-agent/src/config.ts`).
+pub const DEFAULT_RUN_MINUTES: u64 = 30;
+
 /// How the server runs agents (set at start).
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct AgentConfig {
     /// Keys from the environment (`CHARET_ANTHROPIC_API_KEY`, `CHARET_OPENAI_API_KEY`); they win
     /// over the admins' settings.
@@ -41,6 +45,28 @@ pub struct AgentConfig {
     pub script: bool,
     /// Runs at once, server-wide.
     pub max_running: usize,
+    /// The longest a run may take, in minutes (`CHARET_AGENT_TIMEOUT_MIN`, which `charet-agent`
+    /// enforces; it defaults to 30). A login must outlast it, so it is renewed before a run when
+    /// it would not.
+    pub run_minutes: u64,
+}
+
+impl Default for AgentConfig {
+    fn default() -> Self {
+        Self {
+            env_keys: HashMap::new(),
+            script: false,
+            max_running: 0,
+            run_minutes: DEFAULT_RUN_MINUTES,
+        }
+    }
+}
+
+impl AgentConfig {
+    /// The longest a run may take, in seconds.
+    pub(crate) fn run_limit_secs(&self) -> u64 {
+        self.run_minutes.saturating_mul(60)
+    }
 }
 
 impl std::fmt::Debug for AgentConfig {

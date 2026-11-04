@@ -251,7 +251,7 @@ function SignInRow({ provider, oauth }: { provider: Provider; oauth: OAuthStatus
   const t = useT();
   const client = useQueryClient();
   const name = t(META[provider.id].name);
-  const { startSignIn, signOut } = useProviderActions();
+  const { startSignIn, cancelSignIn, signOut } = useProviderActions();
   const [problem, setProblem] = useState<string | undefined>();
   const popup = useRef<Window | null>(null);
   const waiting = oauth.state === "waiting";
@@ -284,10 +284,18 @@ function SignInRow({ provider, oauth }: { provider: Provider; oauth: OAuthStatus
       },
     });
   };
+  // The sign-in under way keeps its code: the same page opens again, not a new sign-in.
+  const reopen = () => {
+    setProblem(undefined);
+    if (!oauth.url) return;
+    const win = window.open(oauth.url, "charet-sign-in", "popup,width=520,height=720");
+    if (win) popup.current = win;
+    else setProblem(t("web.providers.popupBlocked"));
+  };
   const cancel = () => {
     popup.current?.close();
     popup.current = null;
-    signOut.mutate(provider.id);
+    cancelSignIn.mutate(provider.id);
   };
 
   if (oauth.state === "signed_in") {
@@ -305,6 +313,17 @@ function SignInRow({ provider, oauth }: { provider: Provider; oauth: OAuthStatus
             type="button"
             size="sm"
             variant="ghost"
+            disabled={startSignIn.isPending}
+            onClick={open}
+            data-testid={`sign-in-again-${provider.id}`}
+          >
+            <LogIn />
+            {t("web.providers.switchAccount")}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
             disabled={signOut.isPending}
             onClick={() => signOut.mutate(provider.id)}
           >
@@ -312,6 +331,21 @@ function SignInRow({ provider, oauth }: { provider: Provider; oauth: OAuthStatus
             {t("web.providers.signOut")}
           </Button>
         </div>
+        {oauth.error && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Status bad>{t("web.providers.failed", { error: oauth.error })}</Status>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={cancelSignIn.isPending}
+              onClick={() => cancelSignIn.mutate(provider.id)}
+            >
+              {t("web.providers.dismiss")}
+            </Button>
+          </div>
+        )}
+        {problem && <Status bad>{problem}</Status>}
       </Row>
     );
   }
@@ -319,7 +353,7 @@ function SignInRow({ provider, oauth }: { provider: Provider; oauth: OAuthStatus
   return (
     <Row label={t("web.providers.signIn")}>
       {waiting ? (
-        <Waiting provider={provider} oauth={oauth} onCancel={cancel} onReopen={open} />
+        <Waiting provider={provider} oauth={oauth} onCancel={cancel} onReopen={reopen} />
       ) : (
         <div className="flex flex-wrap items-center gap-3">
           <Button

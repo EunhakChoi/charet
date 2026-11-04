@@ -23,6 +23,8 @@ services:
       CHARET_OPENAI_API_KEY: ${CHARET_OPENAI_API_KEY:-}
       CHARET_GOOGLE_API_KEY: ${CHARET_GOOGLE_API_KEY:-}
       CHARET_AGENT_MAX_RUNNING: ${CHARET_AGENT_MAX_RUNNING:-3}
+      # The longest a run may take; the server renews a login to outlast it (the agent service enforces it).
+      CHARET_AGENT_TIMEOUT_MIN: ${CHARET_AGENT_TIMEOUT_MIN:-30}
       # Offers the scripted test agent (no model); for checks only.
       CHARET_AGENT_SCRIPT: ${CHARET_AGENT_SCRIPT:-false}
 
@@ -43,6 +45,7 @@ services:
       CHARET_AGENT_IMAGE: charet-agent-run:local
       CHARET_AGENT_NETWORK: ${CHARET_AGENT_NETWORK:-charet-agent-runs}
       CHARET_AGENT_RUN_HOST: agent
+      CHARET_AGENT_TIMEOUT_MIN: ${CHARET_AGENT_TIMEOUT_MIN:-30}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - secrets:/secrets:ro

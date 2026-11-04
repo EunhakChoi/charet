@@ -3,6 +3,9 @@
 import { readFileSync } from "node:fs";
 import { isIP } from "node:net";
 
+/** Node's timers hold at most 2^31-1 ms (about 24.8 days); a longer delay fires at once. */
+const MAX_TIMER_MS = 2_147_483_647;
+
 export interface Address {
   host: string;
   port: number;
@@ -61,7 +64,11 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
   const doorUrl = (env.CHARET_AGENT_DOOR_URL ?? "http://127.0.0.1:5285").replace(/\/+$/, "");
   if (!/^https?:\/\//.test(doorUrl)) throw new Error("CHARET_AGENT_DOOR_URL must be an http URL");
   const timeoutMin = Number(env.CHARET_AGENT_TIMEOUT_MIN ?? "30");
-  if (!(timeoutMin > 0)) throw new Error("CHARET_AGENT_TIMEOUT_MIN must be a positive number");
+  if (!(timeoutMin > 0) || timeoutMin * 60_000 > MAX_TIMER_MS) {
+    throw new Error(
+      `CHARET_AGENT_TIMEOUT_MIN must be a positive number of minutes, at most ${Math.floor(MAX_TIMER_MS / 60_000)}`,
+    );
+  }
   const memoryGb = Number(env.CHARET_AGENT_MEMORY_GB ?? "4");
   const cpus = Number(env.CHARET_AGENT_CPUS ?? "2");
   if (!(memoryGb > 0) || !(cpus > 0)) {

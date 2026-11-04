@@ -30,16 +30,16 @@ OpenAI for Codex) use an API key, a subscription sign-in, or both:
   - Claude: after signing in, the provider's page shows a code; paste it back into charet.
   - charet keeps the login encrypted, renews it before each run, and hands the run's container only
     the short-lived access token. The refresh token never leaves the server.
+  - One account per provider, shared by everyone's web agent. One sign-in at a time: **Cancel**
+    ends the one that waits and nothing else. **Sign in with another account** replaces the
+    account when the new sign-in succeeds (a failed one leaves it). **Sign out** forgets the
+    login here; the provider is not told.
 - With both set, pick which one the agent uses.
 - `.env` next to `compose.yaml`: `CHARET_ANTHROPIC_API_KEY=…` (Claude), `CHARET_OPENAI_API_KEY=…`
   (Codex), `CHARET_GOOGLE_API_KEY=…` (kept for later; nothing runs on Google yet). These win over
   the page and cannot be changed there.
 
 The same page sets the default agent and a model per agent (empty is the agent's own default).
-
-A subscription sign-in uses the sign-in flows of the providers' own command line tools. It is meant
-for a personal install or a small trusted team: check your provider's terms before putting a
-shared team's work on one person's subscription.
 
 ## Asking
 
@@ -82,7 +82,9 @@ model provider.
   *Name · agent*.
 - The vendor key (or, for a sign-in, its short-lived access token) goes into the run's container
   (the agent needs it). Use a key made for charet so it can be revoked on its own. A run cannot
-  renew a login by itself, so charet renews it first when it has less than 35 minutes left.
+  renew a login by itself, so charet renews it first when it has less than the run time limit
+  (default 30 minutes) plus 5 minutes left. A run that outlasts a login's own lifetime (ChatGPT:
+  about an hour) still fails.
 - The agent service holds the Docker socket, which is root on this machine. It is not reachable
   from run containers except through its two relays and its token-protected API.
 
@@ -93,7 +95,7 @@ model provider.
 | `CHARET_ANTHROPIC_API_KEY`, `CHARET_OPENAI_API_KEY`, `CHARET_GOOGLE_API_KEY` | `.env` | — | keys (or Settings › Web agent) |
 | `CHARET_AGENT_MAX_RUNNING` | `.env` | 3 | runs at once |
 | `CHARET_AGENT_NETWORK` | `.env` | `charet-agent-runs` | the runs' internal network |
-| `CHARET_AGENT_TIMEOUT_MIN` | agent service | 30 | longest run |
+| `CHARET_AGENT_TIMEOUT_MIN` | `.env` | 30 | longest run, in minutes, up to 35791 (the server renews logins to outlast it) |
 | `CHARET_AGENT_MEMORY_GB`, `CHARET_AGENT_CPUS` | agent service | 4, 2 | per run |
 | `CHARET_AGENT_PRICES` | agent service | — | Codex price table |
 | `CHARET_AGENT_ALLOW_HOSTS` | agent service | model APIs | proxy allowlist |

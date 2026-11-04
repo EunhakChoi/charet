@@ -129,6 +129,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("post", "/api/admin/agent/providers/{id}/oauth"),
     ("delete", "/api/admin/agent/providers/{id}/oauth"),
     ("post", "/api/admin/agent/providers/{id}/oauth/code"),
+    ("post", "/api/admin/agent/providers/{id}/oauth/sign-out"),
     ("get", "/api/admin/costs"),
     ("get", "/api/projects/{key}/agent-runs"),
     ("post", "/api/projects/{key}/agent-runs"),
