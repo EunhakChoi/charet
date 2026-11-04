@@ -1593,12 +1593,11 @@ impl crate::AgentRunner for FakeRunner {
     }
 }
 
-/// The providers, steered by tests: which keys they refuse, whether a person finished the device
-/// sign-in, what a refresh gives.
+/// The providers, steered by tests: which keys they refuse, what a sign-in and a refresh give.
 #[derive(Default)]
 pub struct FakeNet {
     refused_keys: Mutex<Vec<String>>,
-    device: Mutex<DevicePlan>,
+    /// The access token a `ChatGPT` code exchange (and, by default, a refresh) gives.
     issued: Mutex<String>,
     refresh_with: Mutex<Option<String>>,
     refresh_refused: Mutex<Option<String>>,
@@ -1610,20 +1609,9 @@ pub struct FakeNet {
     during_exchange: Mutex<Option<Box<dyn Fn() + Send>>>,
     /// Runs while a renewal is in flight.
     during_refresh: Mutex<Option<Box<dyn Fn() + Send>>>,
-    /// Starting a device sign-in is refused with this message.
-    device_start_refused: Mutex<Option<String>>,
-    polls: Mutex<u32>,
-    device_starts: Mutex<u32>,
     refreshes: Mutex<u32>,
     exchanges: Mutex<Vec<(String, String)>>,
-}
-
-#[derive(Default)]
-enum DevicePlan {
-    #[default]
-    Waiting,
-    Finished,
-    Failed(String),
+    openai_exchanges: Mutex<Vec<(String, String)>>,
 }
 
 impl FakeNet {
@@ -1632,24 +1620,14 @@ impl FakeNet {
         self.refused_keys.lock().unwrap().push(prefix.into());
     }
 
-    /// The person finished the device sign-in; the provider issues `access_token`.
-    pub fn finish_device(&self, access_token: &str) {
-        *self.device.lock().unwrap() = DevicePlan::Finished;
+    /// The access token `ChatGPT` issues from now on.
+    pub fn issue(&self, access_token: &str) {
         *self.issued.lock().unwrap() = access_token.into();
-    }
-
-    pub fn fail_device(&self, message: &str) {
-        *self.device.lock().unwrap() = DevicePlan::Failed(message.into());
     }
 
     /// The access token the next refresh issues (default: the one issued at sign-in).
     pub fn next_refresh(&self, access_token: &str) {
         *self.refresh_with.lock().unwrap() = Some(access_token.into());
-    }
-
-    /// Starting a `ChatGPT` sign-in fails (the provider cannot be reached).
-    pub fn refuse_device_start(&self, message: &str) {
-        *self.device_start_refused.lock().unwrap() = Some(message.into());
     }
 
     /// The next refresh keeps the refresh token it was given (the answer has no new one).
@@ -1683,16 +1661,6 @@ impl FakeNet {
         *self.refresh_refused.lock().unwrap() = Some(message.into());
     }
 
-    /// How many times the provider was asked whether the device sign-in was done.
-    pub fn polls(&self) -> u32 {
-        *self.polls.lock().unwrap()
-    }
-
-    /// How many device sign-ins the provider was asked to start.
-    pub fn device_starts(&self) -> u32 {
-        *self.device_starts.lock().unwrap()
-    }
-
     pub fn refreshes(&self) -> u32 {
         *self.refreshes.lock().unwrap()
     }
@@ -1700,6 +1668,11 @@ impl FakeNet {
     /// (code, verifier) of each Claude code exchange.
     pub fn anthropic_exchanges(&self) -> Vec<(String, String)> {
         self.exchanges.lock().unwrap().clone()
+    }
+
+    /// (code, verifier) of each `ChatGPT` code exchange.
+    pub fn openai_exchanges(&self) -> Vec<(String, String)> {
+        self.openai_exchanges.lock().unwrap().clone()
     }
 
     fn tokens(access: String, refresh: Option<&str>, id_token: bool) -> crate::Tokens {
@@ -1736,53 +1709,22 @@ impl crate::ProviderNet for FakeNet {
         }
     }
 
-    fn openai_device_start(&self) -> Result<crate::DeviceAuth, crate::ProviderError> {
-        if let Some(message) = self.device_start_refused.lock().unwrap().take() {
-            return Err(crate::ProviderError::Unavailable(message));
-        }
-        // Every sign-in gets its own id and code, as the provider's do.
-        let number = {
-            let mut starts = self.device_starts.lock().unwrap();
-            *starts += 1;
-            *starts
-        };
-        Ok(crate::DeviceAuth {
-            device_auth_id: format!("dev-{number}"),
-            user_code: format!("ABCD-{}", 1233 + number),
-            interval_secs: 30,
-        })
-    }
-
-    fn openai_device_poll(
-        &self,
-        _device: &crate::DeviceAuth,
-    ) -> Result<crate::DevicePoll, crate::ProviderError> {
-        *self.polls.lock().unwrap() += 1;
-        Ok(match &*self.device.lock().unwrap() {
-            DevicePlan::Waiting => crate::DevicePoll::Pending,
-            DevicePlan::Finished => crate::DevicePoll::Done {
-                authorization_code: "auth-code".into(),
-                code_verifier: "device-verifier".into(),
-            },
-            DevicePlan::Failed(message) => crate::DevicePoll::Failed(message.clone()),
-        })
-    }
-
     fn openai_exchange(
         &self,
         code: &str,
         verifier: &str,
         redirect_uri: &str,
     ) -> Result<crate::Tokens, crate::ProviderError> {
-        if (code, verifier, redirect_uri)
-            != (
-                "auth-code",
-                "device-verifier",
-                crate::OPENAI_DEVICE_REDIRECT,
-            )
-        {
-            return Err(crate::ProviderError::Rejected("wrong exchange".into()));
+        if redirect_uri != crate::OPENAI_REDIRECT {
+            return Err(crate::ProviderError::Rejected("wrong redirect".into()));
         }
+        if code.starts_with("bad") {
+            return Err(crate::ProviderError::Rejected("invalid_grant".into()));
+        }
+        self.openai_exchanges
+            .lock()
+            .unwrap()
+            .push((code.into(), verifier.into()));
         self.exchange_in_flight();
         Ok(Self::tokens(
             self.issued.lock().unwrap().clone(),

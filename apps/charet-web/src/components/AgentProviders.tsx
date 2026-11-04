@@ -1,17 +1,6 @@
 import type { Key } from "@charet/i18n";
-import { useQueryClient } from "@tanstack/react-query";
-import {
-  Check,
-  CircleAlert,
-  CircleCheck,
-  Copy,
-  ExternalLink,
-  LoaderCircle,
-  LogIn,
-  LogOut,
-} from "lucide-react";
-import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
-import { copyText } from "@/components/CopyOnce";
+import { CircleAlert, CircleCheck, ExternalLink, LoaderCircle, LogIn, LogOut } from "lucide-react";
+import { type FormEvent, type ReactNode, useRef, useState } from "react";
 import { Section } from "@/components/Section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
 import type { KeyCheck, OAuthStatus, Provider, ProviderId } from "@/lib/api";
 import { useT } from "@/lib/i18n";
-import { useCheckKey, useProviderActions, useProviders, useSignInStatus } from "@/lib/queries";
+import { useCheckKey, useProviderActions, useProviders } from "@/lib/queries";
 
 const META: Record<ProviderId, { name: Key; agent: Key; soon?: true }> = {
   anthropic: { name: "web.providers.anthropic", agent: "web.providers.anthropic.agent" },
@@ -242,28 +231,22 @@ function Status({ bad, children }: { bad?: boolean; children: ReactNode }) {
 }
 
 /**
- * Sign in with the provider's own login page, opened in a new window. What happens next depends on
- * the provider: ChatGPT shows a code to type at its page (this page notices when it is done);
- * Claude's page shows a code to paste back here. The server keeps the state, so the row looks the
- * same after a reload.
+ * Sign in with the provider's own login page, opened in a new window. What the person pastes back
+ * here depends on the provider: Claude's page shows a code; ChatGPT's ends on an address that does
+ * not load, and that address is the answer. The server keeps the state, so the row looks the same
+ * after a reload.
  */
 function SignInRow({ provider, oauth }: { provider: Provider; oauth: OAuthStatus }) {
   const t = useT();
-  const client = useQueryClient();
   const name = t(META[provider.id].name);
   const { startSignIn, cancelSignIn, signOut } = useProviderActions();
   const [problem, setProblem] = useState<string | undefined>();
   const popup = useRef<Window | null>(null);
   const waiting = oauth.state === "waiting";
-  const polled = useSignInStatus(provider.id, waiting).data;
-
-  // The server saw the sign-in end or fail: show the new state and close the window.
-  useEffect(() => {
-    if (!waiting || !polled || polled.state === "waiting") return;
+  const closeWindow = () => {
     popup.current?.close();
     popup.current = null;
-    void client.invalidateQueries({ queryKey: ["admin"] });
-  }, [waiting, polled, client]);
+  };
 
   const open = () => {
     setProblem(undefined);
@@ -293,8 +276,7 @@ function SignInRow({ provider, oauth }: { provider: Provider; oauth: OAuthStatus
     else setProblem(t("web.providers.popupBlocked"));
   };
   const cancel = () => {
-    popup.current?.close();
-    popup.current = null;
+    closeWindow();
     cancelSignIn.mutate(provider.id);
   };
 
@@ -353,7 +335,7 @@ function SignInRow({ provider, oauth }: { provider: Provider; oauth: OAuthStatus
   return (
     <Row label={t("web.providers.signIn")}>
       {waiting ? (
-        <Waiting provider={provider} oauth={oauth} onCancel={cancel} onReopen={reopen} />
+        <Waiting provider={provider} onDone={closeWindow} onCancel={cancel} onReopen={reopen} />
       ) : (
         <div className="flex flex-wrap items-center gap-3">
           <Button
@@ -380,85 +362,59 @@ function SignInRow({ provider, oauth }: { provider: Provider; oauth: OAuthStatus
   );
 }
 
-/** A sign-in in progress: the code to type (ChatGPT) or the box to paste the code into (Claude). */
+/** A sign-in in progress: the box to paste what the provider's page ends with into. */
 function Waiting({
   provider,
-  oauth,
+  onDone,
   onCancel,
   onReopen,
 }: {
   provider: Provider;
-  oauth: OAuthStatus;
+  onDone: () => void;
   onCancel: () => void;
   onReopen: () => void;
 }) {
   const t = useT();
-  const [copied, setCopied] = useState(false);
   const [code, setCode] = useState("");
   const { finishSignIn } = useProviderActions();
+  const chatgpt = provider.id === "openai";
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (code.trim()) finishSignIn.mutate({ provider: provider.id, code: code.trim() });
+    if (code.trim()) {
+      finishSignIn.mutate({ provider: provider.id, code: code.trim() }, { onSuccess: onDone });
+    }
   };
   return (
     <div className="flex flex-col gap-2.5" data-testid={`waiting-${provider.id}`}>
-      {oauth.method === "device" && oauth.userCode ? (
-        <div className="flex flex-col gap-2">
-          <p className="text-sm">{t("web.providers.typeCode")}</p>
-          <div className="flex flex-wrap items-center gap-2">
-            <code
-              className="rounded-md border bg-muted px-3 py-1.5 font-mono text-lg tracking-widest"
-              data-testid={`user-code-${provider.id}`}
-            >
-              {oauth.userCode}
-            </code>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => copyText(oauth.userCode ?? "").then((ok) => setCopied(ok))}
-              onBlur={() => setCopied(false)}
-            >
-              {copied ? <Check /> : <Copy />}
-              {t("web.providers.copyCode")}
-            </Button>
-          </div>
+      <form onSubmit={submit} className="flex flex-col gap-2">
+        <p className="text-sm">
+          {t(chatgpt ? "web.providers.pasteAddress" : "web.providers.pasteCode")}
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            className="min-w-56 flex-1"
+            autoComplete="off"
+            value={code}
+            onChange={(event) => {
+              setCode(event.target.value);
+              finishSignIn.reset();
+            }}
+            placeholder={chatgpt ? "http://localhost:1455/auth/callback?code=…" : "code#state"}
+            aria-label={t("web.providers.codeFor", { provider: t(META[provider.id].name) })}
+          />
+          <Button
+            type="submit"
+            size="sm"
+            disabled={!code.trim() || finishSignIn.isPending}
+            data-testid={`submit-code-${provider.id}`}
+          >
+            {finishSignIn.isPending && <LoaderCircle className="animate-spin" />}
+            {t("web.providers.submitCode")}
+          </Button>
         </div>
-      ) : (
-        <form onSubmit={submit} className="flex flex-col gap-2">
-          <p className="text-sm">{t("web.providers.pasteCode")}</p>
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              className="min-w-56 flex-1"
-              autoComplete="off"
-              value={code}
-              onChange={(event) => {
-                setCode(event.target.value);
-                finishSignIn.reset();
-              }}
-              placeholder="code#state"
-              aria-label={t("web.providers.codeFor", { provider: t(META[provider.id].name) })}
-            />
-            <Button
-              type="submit"
-              size="sm"
-              disabled={!code.trim() || finishSignIn.isPending}
-              data-testid={`submit-code-${provider.id}`}
-            >
-              {finishSignIn.isPending && <LoaderCircle className="animate-spin" />}
-              {t("web.providers.submitCode")}
-            </Button>
-          </div>
-          {finishSignIn.error && <Status bad>{finishSignIn.error.message}</Status>}
-        </form>
-      )}
+        {finishSignIn.error && <Status bad>{finishSignIn.error.message}</Status>}
+      </form>
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        {oauth.method === "device" && (
-          <>
-            <LoaderCircle className="size-3.5 animate-spin" />
-            <span>{t("web.providers.waiting")}</span>
-          </>
-        )}
         <span className="flex-1" />
         <Button type="button" size="sm" variant="ghost" onClick={onReopen}>
           <ExternalLink />

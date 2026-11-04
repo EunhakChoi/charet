@@ -1343,7 +1343,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Finishes a sign-in whose window shows a code to copy (`method` is `code`) (admins) */
+        /** Finishes the sign-in with what its window ended with, a code or the address the browser was sent to (admins) */
         post: operations["finishProviderSignIn"];
         delete?: never;
         options?: never;
@@ -2062,15 +2062,12 @@ export interface components {
             /** @enum {string} */
             state: "signed_out" | "waiting" | "signed_in" | "failed";
             /**
-             * @description While waiting. `device`: open `url` and type `userCode` there; the server notices when it
-             *     is done. `code`: open `url`; the page it ends on shows a code to paste into `oauth/code`.
-             * @enum {string}
+             * @description While waiting: the provider's sign-in page, to open in a new window. After signing in,
+             *     the person pastes into `oauth/code` what the sign-in ends with: Claude's page shows a
+             *     code; ChatGPT's sends the browser to an address that does not load (`localhost`), and
+             *     that address is what is pasted.
              */
-            method?: "device" | "code";
-            /** @description The provider's sign-in page, to open in a new window (while waiting) */
             url?: string;
-            /** @description The code to type at `url` (method `device`) */
-            userCode?: string;
             /** @description Who is signed in (an email), when known. Kept while a new sign-in waits */
             account?: string;
             /**
@@ -4561,7 +4558,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description What the provider's page shows (`code#state`), or the address it ended on */
+                    /** @description What the provider's page shows (`code#state`), or the address the browser ended on */
                     code: string;
                 };
             };

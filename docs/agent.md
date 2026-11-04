@@ -26,8 +26,11 @@ OpenAI for Codex) use an API key, a subscription sign-in, or both:
   works can be **Saved**. It is stored encrypted with the server key and only its last 4
   characters are ever shown.
 - **Sign in with Claude / ChatGPT**: opens the provider's own login in a new window.
-  - ChatGPT: the page shows a code; type it at the provider's page. charet notices when you are done.
   - Claude: after signing in, the provider's page shows a code; paste it back into charet.
+  - ChatGPT: after signing in, the new window ends on a page that does not load (its address starts
+    with `http://localhost:1455/auth/callback`). That is expected: copy the address from the
+    address bar and paste it into charet. This is the browser login of the provider's own command
+    line tool, so it does not depend on a workspace's device code setting.
   - charet keeps the login encrypted, renews it before each run, and hands the run's container only
     the short-lived access token. The refresh token never leaves the server.
   - One account per provider, shared by everyone's web agent. One sign-in at a time: **Cancel**
