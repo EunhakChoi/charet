@@ -72,6 +72,33 @@ test("asking the agent from a screen makes a draft the team can review", async (
   await expect(page.getByText("In review", { exact: true })).toBeVisible();
 });
 
+test("the panel does not keep a branch that was closed since", async ({ page, request }) => {
+  test.setTimeout(180_000);
+  await page.goto(`${base()}/p/demo/t/screen/tasks-list`);
+  const side = page.getByRole("radiogroup", { name: "Side panel" });
+  await side.getByRole("radio", { name: "Agent" }).click();
+  await page
+    .getByRole("textbox", { name: "Request to the agent" })
+    .fill("write notes/closed.txt: soon closed\nsay Noted.");
+  await page.getByRole("button", { name: "Ask" }).click();
+  await expect(page.getByText("Noted.", { exact: true })).toBeVisible({ timeout: 60_000 });
+  const link = await page
+    .getByRole("link", { name: /Open draft #\d+/ })
+    .first()
+    .textContent();
+  const number = /#(\d+)/.exec(link ?? "")?.[1];
+  if (!number) throw new Error(`no draft number in ${link}`);
+
+  // Closed while the person was elsewhere; back on the screen the panel offers a new draft, not
+  // a branch the server would refuse.
+  const archived = await request.post(`${base()}/api/projects/demo/branches/${number}/archive`);
+  expect(archived.ok()).toBe(true);
+  await page.goto(`${base()}/p/demo/t/screen/tasks-list`);
+  await side.getByRole("radio", { name: "Agent" }).click();
+  await expect(page.getByText(/The agent works on a draft branch/)).toBeVisible();
+  await expect(page.getByText("Noted.", { exact: true })).toHaveCount(0);
+});
+
 test("admins see the web agent settings and its costs", async ({ page }) => {
   await page.goto(`${base()}/settings/agent`);
   const settings = page.getByRole("region", { name: "Default agent and models" });

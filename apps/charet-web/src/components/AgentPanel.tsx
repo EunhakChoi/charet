@@ -86,6 +86,16 @@ export function AgentPanel({
   useEffect(() => {
     if (!branch) draftMemory.write(projectKey, target);
   }, [branch, projectKey, target]);
+  // A remembered branch that was merged or archived since cannot take a request: the server
+  // refuses it. Once the list says so, go back to a new draft. (A branch the list does not hold
+  // yet, such as one a request just made, is left alone.)
+  useEffect(() => {
+    if (branch || target === "new" || !me.data) return;
+    const known = branches.data?.branches.find((b) => b.number === target);
+    const writable =
+      known?.status === "in_review" || (known?.status === "open" && known.author.id === me.data.id);
+    if (known && !writable) setTarget("new");
+  }, [branch, target, branches.data, me.data]);
   const drafts = useMemo(
     () =>
       (branches.data?.branches ?? []).filter(
@@ -136,7 +146,7 @@ export function AgentPanel({
                 #{d.number} {d.title}
               </option>
             ))}
-            {/* A remembered branch that is no longer one of their open drafts (merged, or still loading). */}
+            {/* A remembered branch that is not in the list (yet), or that is in review. */}
             {on !== undefined && !drafts.some((d) => d.number === on) && (
               <option value={on}>#{on}</option>
             )}
