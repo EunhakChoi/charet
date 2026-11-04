@@ -1,10 +1,10 @@
 //! Black-box tests of the router, plus the contract check.
 
 use std::collections::BTreeSet;
+use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
-use std::time::{Duration, SystemTime};
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -20,33 +20,47 @@ use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
-/// How long a folder of an earlier test run is kept: long enough that a run still going is never
-/// swept away, short enough that runs do not pile up.
-const KEEP_RUNS: Duration = Duration::from_mins(15);
+/// What a run holds a lock on while it lives (see [`scratch`]).
+const LOCK: &str = ".lock";
 
 /// Where this run's engines keep their files: a folder of its own in cargo's scratch folder for
 /// tests (`target/tmp`, which `cargo clean` empties), not in the machine's temp folder, where
-/// every run used to leave twenty folders behind. Folders of earlier runs are removed on the way.
+/// every run used to leave twenty folders behind.
+///
+/// A run holds a lock on a file in its folder for as long as it lives (the OS drops the lock when
+/// the process ends, however it ends). A run that starts removes the folders of runs whose lock
+/// nobody holds, so a run still going is never swept away, however long it takes, and finished
+/// ones do not pile up.
 fn scratch() -> &'static Path {
     static DIR: OnceLock<PathBuf> = OnceLock::new();
+    static HELD: OnceLock<File> = OnceLock::new();
     DIR.get_or_init(|| {
         let base = Path::new(env!("CARGO_TARGET_TMPDIR"));
+        let mine = base.join(format!("charet-api-{}", std::process::id()));
+        std::fs::create_dir_all(&mine).unwrap();
+        let held = File::create(mine.join(LOCK)).unwrap();
+        held.lock().unwrap();
+        HELD.set(held).unwrap();
         for entry in std::fs::read_dir(base).into_iter().flatten().flatten() {
-            let old = entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with("charet-api-")
-                && entry
-                    .metadata()
-                    .and_then(|m| m.modified())
-                    .ok()
-                    .and_then(|at| SystemTime::now().duration_since(at).ok())
-                    .is_some_and(|age| age > KEEP_RUNS);
-            if old {
-                let _ = std::fs::remove_dir_all(entry.path());
+            let path = entry.path();
+            if path == mine
+                || !entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("charet-api-")
+            {
+                continue;
+            }
+            // A folder without a lock file is one a run is only now making: left alone.
+            let over = OpenOptions::new()
+                .write(true)
+                .open(path.join(LOCK))
+                .is_ok_and(|file| file.try_lock().is_ok());
+            if over {
+                let _ = std::fs::remove_dir_all(&path);
             }
         }
-        base.join(format!("charet-api-{}", std::process::id()))
+        mine
     })
 }
 
