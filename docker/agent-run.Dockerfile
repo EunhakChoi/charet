@@ -14,7 +14,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /opt/runner
 RUN npm install --omit=dev --no-audit --no-fund \
-      @anthropic-ai/claude-agent-sdk@0.3.290 @openai/codex-sdk@0.160.1 \
+      @anthropic-ai/claude-agent-sdk@0.3.318 @openai/codex-sdk@0.166.0 \
     && npm cache clean --force
 COPY --from=cli /src/node_modules /opt/charet/node_modules
 COPY --from=cli /src/apps/charet-cli /opt/charet/apps/charet-cli
