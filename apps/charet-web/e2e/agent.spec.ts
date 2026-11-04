@@ -46,6 +46,14 @@ test("asking the agent from a screen makes a draft the team can review", async (
       .first(),
   ).toBeVisible();
 
+  // Leaving the screen and coming back: the panel finds the conversation again.
+  await page.goto(`${base()}/p/demo/t/screen/tasks-list`);
+  await page
+    .getByRole("radiogroup", { name: "Side panel" })
+    .getByRole("radio", { name: "Agent" })
+    .click();
+  await expect(page.getByText("I added a note.", { exact: true })).toBeVisible();
+
   const open = page.getByRole("link", { name: /Open draft #\d+/ });
   await open.click();
   await expect(page).toHaveURL(/\/p\/demo\/branches\/\d+$/);
