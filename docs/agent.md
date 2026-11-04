@@ -34,6 +34,9 @@ OpenAI for Codex) use an API key, a subscription sign-in, or both:
   - charet keeps the login encrypted, renews it before each run (and every 5 minutes in the
     background, when the one in use would not last until the next check and a run), and hands the
     run's container only the short-lived access token. The refresh token never leaves the server.
+    The background renewal is at most once per 30 minutes per provider (unless the login would
+    lapse before the next check), and a login the provider has refused is left alone until you
+    sign in again (a run still tries it and reports the provider's answer).
   - One account per provider, shared by everyone's web agent. One sign-in at a time: **Cancel**
     ends the one that waits and nothing else. **Sign in with another account** replaces the
     account when the new sign-in succeeds (a failed one leaves it). **Sign out** forgets the

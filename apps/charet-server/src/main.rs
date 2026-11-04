@@ -331,42 +331,46 @@ fn archive_idle_drafts(engine: Engine) {
 
 /// Every few minutes, renews the subscription logins the web agent runs on before a run needs them.
 fn keep_logins_fresh(engine: Engine) {
-    tokio::spawn(async move {
-        let mut last_error = String::new();
-        loop {
-            let run = engine.clone();
-            if let Ok(Err(error)) = tokio::task::spawn_blocking(move || run.providers_tick()).await
-            {
-                let error = error.to_string();
-                if error != last_error {
-                    eprintln!("charet-server: web agent logins: {error}");
-                }
-                last_error = error;
-            } else {
-                last_error.clear();
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(
-                charet_engine::PROVIDERS_TICK_SECS,
-            ))
-            .await;
-        }
-    });
+    every(
+        engine,
+        "web agent logins",
+        std::time::Duration::from_secs(charet_engine::PROVIDERS_TICK_SECS),
+        Engine::providers_tick,
+    );
 }
 
 /// Every second, takes in what web agent runs did and starts waiting ones.
 fn follow_agent_runs(engine: Engine) {
+    every(
+        engine,
+        "web agent",
+        std::time::Duration::from_secs(1),
+        Engine::agents_tick,
+    );
+}
+
+/// Runs `job` every `pause` for as long as the server does. A failure (or a panic) is printed once
+/// and not again while the same one repeats; a run that works starts that over.
+fn every(
+    engine: Engine,
+    what: &'static str,
+    pause: std::time::Duration,
+    job: fn(&Engine) -> Result<(), charet_engine::EngineError>,
+) {
     tokio::spawn(async move {
         let mut last_error = String::new();
         loop {
             let run = engine.clone();
-            if let Ok(Err(error)) = tokio::task::spawn_blocking(move || run.agents_tick()).await {
-                let error = error.to_string();
-                if error != last_error {
-                    eprintln!("charet-server: web agent: {error}");
-                }
-                last_error = error;
+            let error = match tokio::task::spawn_blocking(move || job(&run)).await {
+                Ok(Ok(())) => String::new(),
+                Ok(Err(error)) => error.to_string(),
+                Err(_) => "the job panicked".to_owned(),
+            };
+            if !error.is_empty() && error != last_error {
+                eprintln!("charet-server: {what}: {error}");
             }
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            last_error = error;
+            tokio::time::sleep(pause).await;
         }
     });
 }
