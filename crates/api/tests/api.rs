@@ -38,8 +38,13 @@ fn scratch() -> &'static Path {
         let base = Path::new(env!("CARGO_TARGET_TMPDIR"));
         let mine = base.join(format!("charet-api-{}", std::process::id()));
         std::fs::create_dir_all(&mine).unwrap();
-        let held = File::create(mine.join(LOCK)).unwrap();
+        // The lock is taken before the file gets its name, so a run that sweeps never meets it
+        // unlocked: it either does not see the file yet or finds it held.
+        let _ = std::fs::remove_file(mine.join(LOCK));
+        let pending = mine.join(format!("{LOCK}.new"));
+        let held = File::create(&pending).unwrap();
         held.lock().unwrap();
+        std::fs::rename(&pending, mine.join(LOCK)).unwrap();
         HELD.set(held).unwrap();
         for entry in std::fs::read_dir(base).into_iter().flatten().flatten() {
             let path = entry.path();
