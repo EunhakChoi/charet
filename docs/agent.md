@@ -95,7 +95,7 @@ model provider.
 | `CHARET_ANTHROPIC_API_KEY`, `CHARET_OPENAI_API_KEY`, `CHARET_GOOGLE_API_KEY` | `.env` | — | keys (or Settings › Web agent) |
 | `CHARET_AGENT_MAX_RUNNING` | `.env` | 3 | runs at once |
 | `CHARET_AGENT_NETWORK` | `.env` | `charet-agent-runs` | the runs' internal network |
-| `CHARET_AGENT_TIMEOUT_MIN` | `.env` | 30 | longest run, in minutes (the server renews logins to outlast it) |
+| `CHARET_AGENT_TIMEOUT_MIN` | `.env` | 30 | longest run, in minutes, up to 35791 (the server renews logins to outlast it) |
 | `CHARET_AGENT_MEMORY_GB`, `CHARET_AGENT_CPUS` | agent service | 4, 2 | per run |
 | `CHARET_AGENT_PRICES` | agent service | — | Codex price table |
 | `CHARET_AGENT_ALLOW_HOSTS` | agent service | model APIs | proxy allowlist |

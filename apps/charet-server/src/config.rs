@@ -280,13 +280,16 @@ fn remote_bind(
     Ok(Some(addr))
 }
 
-/// A run limit as whole minutes. The rule is `charet-agent`'s own: any number above zero, so a
-/// fraction of a minute counts as the whole one. A huge value saturates (it only means "always
-/// renew"), so both services accept the same `.env`.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // n > 0; `as` saturates
+/// The longest delay a Node timer holds (2^31-1 ms): `charet-agent` stops a run with one.
+const MAX_RUN_MS: f64 = 2_147_483_647.0;
+
+/// A run limit as whole minutes. The rule is `charet-agent`'s own, so both services accept the
+/// same `.env`: a number above zero that a timer can hold, and a fraction of a minute counts as the
+/// whole one.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // 0 < n <= 35,791.4
 fn whole_minutes(text: &str) -> Option<u64> {
     let n: f64 = text.trim().parse().ok()?;
-    (n > 0.0).then(|| n.ceil() as u64)
+    (n > 0.0 && n * 60_000.0 <= MAX_RUN_MS).then(|| n.ceil() as u64)
 }
 
 /// The web agent's settings; none without `CHARET_AGENT_URL`.
@@ -534,15 +537,11 @@ mod tests {
             .map(|c| c.agent.unwrap().run_minutes)
         };
         assert_eq!(limit("90"), Ok(90));
-        assert_eq!(
-            limit("2880"),
-            Ok(2880),
-            "no cap of the server's own: charet-agent has none"
-        );
-        assert_eq!(
-            limit("1e30"),
-            Ok(u64::MAX),
-            "a huge value saturates instead of failing"
+        assert_eq!(limit("2880"), Ok(2880));
+        assert_eq!(limit("35791"), Ok(35791), "the longest a timer holds");
+        assert!(
+            limit("35792").is_err() && limit("1e30").is_err(),
+            "longer than a timer holds: charet-agent would stop every run at once"
         );
         assert_eq!(
             limit("0.5"),

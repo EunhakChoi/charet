@@ -93,7 +93,7 @@ docker compose -f compose.yaml -f compose.agent.yaml up -d --build
 | `CHARET_ANTHROPIC_API_KEY`, `CHARET_OPENAI_API_KEY`, `CHARET_GOOGLE_API_KEY` | `.env` | — | key (또는 설정 › Web agent) |
 | `CHARET_AGENT_MAX_RUNNING` | `.env` | 3 | 동시 실행 수 |
 | `CHARET_AGENT_NETWORK` | `.env` | `charet-agent-runs` | run 용 internal network |
-| `CHARET_AGENT_TIMEOUT_MIN` | `.env` | 30 | 최대 실행 시간 (server 가 이보다 오래 가도록 로그인을 갱신) |
+| `CHARET_AGENT_TIMEOUT_MIN` | `.env` | 30 | 최대 실행 시간 (분, 최대 35791). server 가 이보다 오래 가도록 로그인을 갱신 |
 | `CHARET_AGENT_MEMORY_GB`, `CHARET_AGENT_CPUS` | agent service | 4, 2 | run 당 |
 | `CHARET_AGENT_PRICES` | agent service | — | Codex 가격표 |
 | `CHARET_AGENT_ALLOW_HOSTS` | agent service | model API | proxy 허용 목록 |
