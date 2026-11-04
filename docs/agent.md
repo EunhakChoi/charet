@@ -90,8 +90,9 @@ model provider.
 - The vendor key (or, for a sign-in, its short-lived access token) goes into the run's container
   (the agent needs it). Use a key made for charet so it can be revoked on its own. A run cannot
   renew a login by itself, so charet renews it first when it has less than the run time limit
-  (default 30 minutes) plus 5 minutes left. A run that outlasts a login's own lifetime (ChatGPT:
-  about an hour) still fails.
+  (default 30 minutes) plus 5 minutes left. A run that outlasts the access token itself still
+  fails; the providers' tokens last far longer than the default limit (ChatGPT: about 10 days,
+  Claude: several hours), so that only matters if you raise `CHARET_AGENT_TIMEOUT_MIN` past one.
 - The agent service holds the Docker socket, which is root on this machine. It is not reachable
   from run containers except through its two relays and its token-protected API.
 

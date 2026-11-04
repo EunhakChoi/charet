@@ -27,6 +27,30 @@ const MAX_IMAGES = 4;
 const MAX_BYTES = 5 * 1024 * 1024;
 
 /**
+ * The draft the person last worked on in this tab, kept per project: the panel starts again from
+ * nothing when they leave the page and come back, and without this it would forget which
+ * conversation it was showing. A tab of its own starts clean, so a request never lands on an old
+ * draft by surprise.
+ */
+const draftMemory = {
+  key: (project: string) => `charet.agent.draft.${project}`,
+  read(project: string): number | undefined {
+    try {
+      const number = Number(sessionStorage.getItem(draftMemory.key(project)));
+      return Number.isInteger(number) && number > 0 ? number : undefined;
+    } catch {
+      return undefined;
+    }
+  },
+  write(project: string, target: number | "new"): void {
+    try {
+      if (target === "new") sessionStorage.removeItem(draftMemory.key(project));
+      else sessionStorage.setItem(draftMemory.key(project), String(target));
+    } catch {}
+  },
+};
+
+/**
  * Asks the web agent for a change and follows it. Without `branch` the person picks a new draft or
  * one of their drafts; with it, the conversation stays on that branch.
  */
@@ -52,10 +76,26 @@ export function AgentPanel({
   const agent = useAgent(canEdit);
   const me = useMe();
   const branches = useBranches(projectKey);
-  const [target, setTarget] = useState<number | "new">(branch ?? "new");
+  const [target, setTarget] = useState<number | "new">(
+    () => branch ?? draftMemory.read(projectKey) ?? "new",
+  );
   useEffect(() => {
     if (branch) setTarget(branch);
   }, [branch]);
+  // On a branch's own page the branch is given; elsewhere the person's choice is what is kept.
+  useEffect(() => {
+    if (!branch) draftMemory.write(projectKey, target);
+  }, [branch, projectKey, target]);
+  // A remembered branch that was merged or archived since cannot take a request: the server
+  // refuses it. Once the list says so, go back to a new draft. (A branch the list does not hold
+  // yet, such as one a request just made, is left alone.)
+  useEffect(() => {
+    if (branch || target === "new" || !me.data) return;
+    const known = branches.data?.branches.find((b) => b.number === target);
+    const writable =
+      known?.status === "in_review" || (known?.status === "open" && known.author.id === me.data.id);
+    if (known && !writable) setTarget("new");
+  }, [branch, target, branches.data, me.data]);
   const drafts = useMemo(
     () =>
       (branches.data?.branches ?? []).filter(
@@ -106,6 +146,10 @@ export function AgentPanel({
                 #{d.number} {d.title}
               </option>
             ))}
+            {/* A remembered branch that is not in the list (yet), or that is in review. */}
+            {on !== undefined && !drafts.some((d) => d.number === on) && (
+              <option value={on}>#{on}</option>
+            )}
           </select>
         </div>
       )}

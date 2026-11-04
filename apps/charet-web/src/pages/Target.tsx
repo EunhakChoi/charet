@@ -251,6 +251,7 @@ export function Target() {
           />
         ) : side === "agent" && canEdit && agent.data?.enabled ? (
           <AgentPanel
+            key={key}
             projectKey={key}
             context={agentContext(kind, id, theme, pick)}
             contextLabel={contextLabel(kind, id, pick)}
