@@ -28,7 +28,9 @@ docker compose -f compose.yaml -f compose.agent.yaml up -d --build
   - Claude: 로그인 후 provider page 에 표시된 code 를 charet 에 붙여넣기.
   - ChatGPT: 로그인 후 새 창이 열리지 않는 page 로 끝남 (주소가 `http://localhost:1455/auth/callback` 으로 시작). 정상 동작이므로 주소창의 주소를 복사해 charet 에 붙여넣기.
     - provider 자체 command line tool 의 browser 로그인 방식이라 workspace 의 장치 코드 설정과 무관.
-  - 로그인 정보는 암호화해 보관. Run 시작 전에 갱신하고, run container 에는 수명이 짧은 access token 만 전달. Refresh token 은 server 밖으로 나가지 않음.
+  - 로그인 정보는 암호화해 보관. Run 시작 전에 갱신 (사용 중인 로그인은 다음 점검 + run 만큼 못 버티면 5분마다 background 에서도 갱신). run container 에는 수명이 짧은 access token 만 전달. Refresh token 은 server 밖으로 나가지 않음.
+    - background 갱신은 provider 당 30분에 1번 이하 (다음 점검 전에 만료될 login 은 예외).
+    - provider 가 거부한 로그인은 다시 sign in 할 때까지 background 에서 건드리지 않음 (run 은 시도하고 provider 응답을 그대로 알려줌).
   - Provider 당 계정 1개 (모든 팀원의 web agent 공용). Sign-in 은 한 번에 1개.
     - **취소**: 진행 중인 sign-in 만 끝냄. 로그인된 계정은 그대로.
     - **다른 계정으로 로그인**: 새 sign-in 이 성공하면 계정 교체. 실패하면 기존 계정 유지.
