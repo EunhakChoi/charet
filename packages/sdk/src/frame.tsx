@@ -38,7 +38,8 @@ const centered = (node: ReactNode) => (
       padding: 24,
     }}
   >
-    {node}
+    {/* One box around whatever the story returns, so siblings keep their normal flow. */}
+    <div style={{ maxWidth: "100%" }}>{node}</div>
   </div>
 );
 

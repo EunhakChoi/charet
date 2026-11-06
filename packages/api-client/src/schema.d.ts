@@ -1503,11 +1503,13 @@ export interface components {
                 component: string;
                 title: string;
                 size: components["schemas"]["Size"];
-                /** @description What this state sets, per prop, in the order it declared them (the Components view's prop picker) */
+                /** @description What this state sets, per prop (the Components view's prop picker) */
                 props?: {
                     name: string;
                     value: string;
-                }[];
+                }[] | {
+                    [key: string]: string;
+                };
                 /** @description The code that makes this state, shown next to the preview */
                 code?: string;
             }[];
