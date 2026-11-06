@@ -2513,6 +2513,9 @@ components:
               code:
                 type: string
                 description: The code that makes this state, shown next to the preview
+              group:
+                type: string
+                description: Which part of the Components view the component is listed under (default Base)
     Person:
       type: object
       required: [id, name]

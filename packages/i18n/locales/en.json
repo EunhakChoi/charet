@@ -567,5 +567,7 @@
   "web.providers.tryAgain": "Try signing in again",
   "web.components.openStory": "Open",
   "web.components.states": "states",
-  "web.components.title": "Components"
+  "web.components.title": "Components",
+  "web.components.groups": "Component groups",
+  "web.components.base": "Base"
 }

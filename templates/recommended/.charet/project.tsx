@@ -1,5 +1,6 @@
 import { defineProject, variants } from "@charet/sdk";
 import { HttpResponse, http } from "msw";
+import { TaskRow } from "@/components/TaskRow";
 import { Button } from "@/components/ui/button";
 import { sampleTasks, tasks } from "./mocks.ts";
 
@@ -54,5 +55,19 @@ export default defineProject({
       title: "Loading",
       render: () => <Button disabled>Saving…</Button>,
     },
+    // A component that is not a plain building block: it gets default values (a sample task) and
+    // its own group, so the Components view lists it apart from the base components.
+    ...variants({
+      component: "TaskRow",
+      group: "Feature",
+      props: { done: ["false", "true"] },
+      render: (p) => (
+        <ul className="w-80 divide-y divide-border rounded-md border border-border">
+          <TaskRow task={{ id: 1, title: "Write the release notes", done: p.done === "true" }} />
+        </ul>
+      ),
+      code: (p) =>
+        `<TaskRow task={{ id: 1, title: "Write the release notes", done: ${p.done} }} />`,
+    }),
   ],
 });

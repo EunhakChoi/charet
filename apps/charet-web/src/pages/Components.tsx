@@ -4,10 +4,14 @@ import { Link } from "react-router";
 import { copyText } from "@/components/CopyOnce";
 import { Live } from "@/components/Live";
 import { Button } from "@/components/ui/button";
+import { Segmented } from "@/components/ui/segmented";
 import type { Manifest } from "@/lib/api";
 import {
+  BASE_GROUP,
   byComponent,
   firstStory,
+  groupNames,
+  inGroup,
   pickProp,
   plainStories,
   propChoices,
@@ -150,31 +154,49 @@ function Gallery({ name, stories }: { name: string; stories: Story[] }) {
 export function Components() {
   const t = useT();
   const { manifest } = useProjectContext();
+  const [picked, setPicked] = useState<string | undefined>();
   if (!manifest) return <Empty text={t("web.common.loading")} />;
   if (manifest.stories.length === 0) return <Empty text={t("web.components.empty")} />;
-  const components = byComponent(manifest.stories);
+  // Groups (`Base`, `Feature`, …) are told apart by a switch; with only one there is none.
+  const groups = groupNames(manifest.stories);
+  const group =
+    picked !== undefined && groups.includes(picked) ? picked : (groups[0] ?? BASE_GROUP);
+  const components = byComponent(inGroup(manifest.stories, group));
   return (
     <div className="flex-1 overflow-auto bg-canvas">
       <div className="mx-auto flex max-w-6xl flex-col px-6 pb-16">
         <nav
           aria-label={t("web.components.title")}
-          className="sticky top-0 z-10 -mx-6 flex flex-wrap gap-1.5 border-b bg-canvas/95 px-6 py-3 backdrop-blur"
+          className="sticky top-0 z-10 -mx-6 flex flex-wrap items-center gap-3 border-b bg-canvas/95 px-6 py-3 backdrop-blur"
         >
-          {components.map(({ name }) => (
-            <a
-              key={name}
-              href={`#component-${name}`}
-              onClick={(event) => {
-                event.preventDefault();
-                document
-                  .getElementById(`component-${name}`)
-                  ?.scrollIntoView({ behavior: "smooth", block: "start" });
-              }}
-              className="rounded-full bg-secondary px-3 py-1 text-xs hover:bg-accent"
-            >
-              {name}
-            </a>
-          ))}
+          {groups.length > 1 && (
+            <Segmented
+              value={group}
+              onChange={setPicked}
+              label={t("web.components.groups")}
+              options={groups.map((name) => ({
+                value: name,
+                label: name || t("web.components.base"),
+              }))}
+            />
+          )}
+          <div className="flex flex-wrap gap-1.5">
+            {components.map(({ name }) => (
+              <a
+                key={name}
+                href={`#component-${name}`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  document
+                    .getElementById(`component-${name}`)
+                    ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
+                className="rounded-full bg-secondary px-3 py-1 text-xs hover:bg-accent"
+              >
+                {name}
+              </a>
+            ))}
+          </div>
         </nav>
         {components.map(({ name, stories }) => (
           <Gallery key={name} name={name} stories={stories} />

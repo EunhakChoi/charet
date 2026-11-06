@@ -24,7 +24,7 @@ test("a preview build has the app, the frame, the manifest and source locations"
       ["tasks-list", "tasks-empty", "tasks-open", "tasks-error"],
     );
     assert.equal(manifest.flows[0].steps[2].planned, true);
-    assert.equal(manifest.stories.length, 10);
+    assert.equal(manifest.stories.length, 12);
 
     const js = readdirSync(join(outDir, "assets"))
       .filter((f) => f.endsWith(".js"))

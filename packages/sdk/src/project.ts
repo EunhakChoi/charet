@@ -93,6 +93,11 @@ export interface StoryDef<Node = unknown, Mock = unknown> {
   props?: Record<string, string>;
   /** The code that makes this state, shown next to the preview. */
   code?: string;
+  /**
+   * Which part of the Components view the component is listed under (`"Feature"`). The Components
+   * view switches between groups; a story with none is in the default group (`Base`).
+   */
+  group?: string;
 }
 
 /** One component with every combination of some props to show (see `variants`). */
@@ -105,6 +110,8 @@ export interface VariantsDef<Node = unknown, Mock = unknown> {
   render: (props: Record<string, string>) => Node;
   /** The code that makes one combination. */
   code?: (props: Record<string, string>) => string;
+  /** The Components view group of the component (see `StoryDef.group`). */
+  group?: string;
   size?: Size;
   mocks?: Mock[];
 }
@@ -141,6 +148,7 @@ export function variants<Node, Mock>(def: VariantsDef<Node, Mock>): StoryDef<Nod
       render: () => def.render(props),
       props,
       ...(def.code ? { code: def.code(props) } : {}),
+      ...(def.group ? { group: def.group } : {}),
       ...(def.size ? { size: def.size } : {}),
       ...(def.mocks ? { mocks: def.mocks } : {}),
     };
@@ -270,6 +278,7 @@ export interface Manifest {
     /** The props' names in the order the story declared them (JSON object keys do not keep it). */
     propOrder?: string[];
     code?: string;
+    group?: string;
   }[];
 }
 
@@ -330,6 +339,7 @@ export function toManifest(project: ProjectDef): Manifest {
         ? { props: s.props, propOrder: Object.keys(s.props) }
         : {}),
       ...(s.code ? { code: s.code } : {}),
+      ...(s.group ? { group: s.group } : {}),
     })),
   };
 }

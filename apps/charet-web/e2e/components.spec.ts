@@ -53,3 +53,25 @@ test("a component's state is picked by its props and shown live", async ({ page 
   await button.getByTestId("story-button-variant-outline-size-sm").click();
   await expect(page).toHaveURL(/\/p\/demo\/t\/story\/button-variant-outline-size-sm$/);
 });
+
+test("feature components are listed apart, under their own group, with default values", async ({
+  page,
+}) => {
+  await page.goto(`${base()}/p/demo/components`);
+  await expect(page.getByTestId("component-Button")).toBeVisible();
+  await expect(page.getByTestId("component-TaskRow")).toHaveCount(0);
+
+  await page.getByRole("radio", { name: "Feature" }).click();
+  const row = page.getByTestId("component-TaskRow");
+  await expect(row).toBeVisible();
+  await expect(page.getByTestId("component-Button")).toHaveCount(0);
+  await expect(row.locator("pre")).toHaveText(
+    '<TaskRow task={{ id: 1, title: "Write the release notes", done: false }} />',
+  );
+  await row.getByTestId("prop-TaskRow-done-true").click();
+  const frame = row.frameLocator('iframe[title="task-row-done-true"]');
+  await expect(frame.getByText("Write the release notes")).toBeVisible({ timeout: 30_000 });
+
+  await page.getByRole("radio", { name: "Base" }).click();
+  await expect(page.getByTestId("component-Button")).toBeVisible();
+});

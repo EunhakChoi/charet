@@ -556,5 +556,7 @@
   "web.providers.tryAgain": "다시 로그인",
   "web.components.openStory": "열기",
   "web.components.states": "상태",
-  "web.components.title": "Component"
+  "web.components.title": "Component",
+  "web.components.groups": "component 묶음",
+  "web.components.base": "기본"
 }
