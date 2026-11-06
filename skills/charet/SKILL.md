@@ -173,7 +173,8 @@ charet handoff -p <project>
 |---|---|
 | nothing new on either side | Carry on. |
 | the repo changed (commits or uncommitted edits) | `charet import --update -p <project>`, below. Commit uncommitted edits first: the import records the repo's `HEAD`. |
-| versions in charet not in the repo | Export them first (Workflow 5), or the next import fights over the same lines. |
+| versions in charet not in the repo, repo unchanged | Export them (Workflow 5) before anyone edits the repo directly, or the next import fights over the same lines. |
+| both: the repo changed and charet has versions not handed off | Import first (the import keeps those versions), then export (Workflow 5, drift first). |
 | drift `unknown` | You cannot tell. Say so and ask an admin; do not call charet current. |
 | nothing at all (repo or server unreachable) | Say you could not check. |
 
