@@ -7,8 +7,10 @@
 //!
 //! A component needs a definition file in the project. Icons and library components (a router's
 //! `Link`) have none and are left out, and so is anything that fills most of a screen (a page).
+//! Two components of one name in different files are two. A component that returns several
+//! elements counts once, not once per element.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use charet_model::Actor;
 use serde::Serialize;
@@ -53,7 +55,8 @@ pub struct ComponentUse {
 
 impl Engine {
     /// The components the project's screens use, from their captures in `theme`, grouped by the
-    /// directory of the file that defines them.
+    /// directory of the file that defines them. Only screens the project still has count: the
+    /// capture of one that was renamed or removed stays stored.
     pub fn components(
         &self,
         actor: &Actor,
@@ -67,6 +70,14 @@ impl Engine {
         let Some(head) = self.ports.store.head(key)? else {
             return Ok(Vec::new());
         };
+        let (_, manifest) = self.manifest(actor, key, "main")?;
+        let screens: BTreeSet<&str> = manifest
+            .get("screens")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|screen| screen.get("id")?.as_str())
+            .collect();
         let app = app_dir(self.ports.store.read(key, &head, "charet.json")?.as_deref());
         let files = self
             .ports
@@ -83,7 +94,10 @@ impl Engine {
             .collect::<Vec<_>>();
         let mut shots = Vec::new();
         for capture in self.ports.captures.list(key)? {
-            if capture.kind != "screen" || capture.theme != theme {
+            if capture.kind != "screen"
+                || capture.theme != theme
+                || !screens.contains(capture.target.as_str())
+            {
                 continue;
             }
             if let Some(map) =
@@ -98,6 +112,32 @@ impl Engine {
     }
 }
 
+/// One element-map row that roots a component instance.
+struct Root {
+    name: String,
+    /// Where the component was placed (`path:line:col`).
+    used: String,
+    /// The line of the component's file this root element is written on, when known.
+    src: Option<String>,
+    x: i64,
+    y: i64,
+    w: i64,
+    h: i64,
+    text: String,
+}
+
+/// One use of a component: the box of its root elements.
+struct Instance {
+    name: String,
+    /// The file its root element is written in, when the element says.
+    file: Option<String>,
+    x: i64,
+    y: i64,
+    w: i64,
+    h: i64,
+    text: String,
+}
+
 /// One use before its component is known to be the project's.
 struct Found {
     screen: String,
@@ -108,33 +148,124 @@ struct Found {
     text: String,
 }
 
-/// Groups the component uses of `shots` (a capture and its element map each) by component.
-/// `files` are the project's files, relative to the app, for components whose elements say
-/// nowhere where they are defined.
-fn gather(shots: &[(Capture, Value)], files: &[String]) -> Vec<ComponentGroup> {
-    let mut found: BTreeMap<String, Vec<Found>> = BTreeMap::new();
-    let mut defined: HashMap<String, HashMap<String, usize>> = HashMap::new();
-    for (capture, map) in shots {
-        let screen_area = i64::from(capture.width) * i64::from(capture.height);
-        for element in map.as_array().into_iter().flatten() {
-            if element.get("use").and_then(Value::as_str).is_none() {
-                continue;
-            }
-            let Some(name) = element
-                .get("chain")
-                .and_then(Value::as_array)
-                .and_then(|chain| chain.last())
-                .and_then(Value::as_str)
-                .map(plain_name)
-            else {
-                continue;
-            };
+/// The rows of an element map that root a component instance, in document order.
+fn roots(map: &Value) -> Vec<Root> {
+    map.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|element| {
+            let used = element.get("use")?.as_str()?.to_owned();
+            let name = plain_name(element.get("chain")?.as_array()?.last()?.as_str()?);
             let [x, y, w, h] = ["x", "y", "w", "h"].map(|side| {
                 element
                     .get(side)
                     .and_then(Value::as_i64)
                     .unwrap_or_default()
             });
+            Some(Root {
+                name,
+                used,
+                src: element
+                    .get("src")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                x,
+                y,
+                w,
+                h,
+                text: element
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .trim()
+                    .chars()
+                    .take(MAX_TEXT)
+                    .collect(),
+            })
+        })
+        .collect()
+}
+
+/// The component instances of an element map.
+///
+/// A component that returns several elements (a fragment) has a row for each, all at the place it
+/// was used but on different lines of its file; the items of a list are rows at the same place and
+/// on the same line. So the n-th row of each line is one instance, and its box holds them all.
+/// A row that says nothing about its line is an instance of its own.
+fn instances(map: &Value) -> Vec<Instance> {
+    let mut grouped: Vec<Vec<Root>> = Vec::new();
+    // By component, place and file: two components of one name are told apart by their files.
+    let mut sites: BTreeMap<(String, String, String), BTreeMap<String, Vec<Root>>> =
+        BTreeMap::new();
+    for root in roots(map) {
+        match root.src.clone() {
+            Some(line) => {
+                let file = source_file(&line).unwrap_or_default().to_owned();
+                sites
+                    .entry((root.name.clone(), root.used.clone(), file))
+                    .or_default()
+                    .entry(line)
+                    .or_default()
+                    .push(root);
+            }
+            None => grouped.push(vec![root]),
+        }
+    }
+    for by_line in sites.into_values() {
+        let count = by_line.values().map(Vec::len).max().unwrap_or_default();
+        let mut lines: Vec<_> = by_line.into_values().map(Vec::into_iter).collect();
+        for _ in 0..count {
+            grouped.push(lines.iter_mut().filter_map(Iterator::next).collect());
+        }
+    }
+    grouped.iter().filter_map(|roots| union(roots)).collect()
+}
+
+/// The roots of one instance as a single box.
+fn union(roots: &[Root]) -> Option<Instance> {
+    let first = roots.first()?;
+    let x = roots.iter().map(|r| r.x).min()?;
+    let y = roots.iter().map(|r| r.y).min()?;
+    let right = roots.iter().map(|r| r.x.saturating_add(r.w)).max()?;
+    let bottom = roots.iter().map(|r| r.y.saturating_add(r.h)).max()?;
+    Some(Instance {
+        name: first.name.clone(),
+        file: first
+            .src
+            .as_deref()
+            .and_then(source_file)
+            .map(str::to_owned),
+        x,
+        y,
+        w: right - x,
+        h: bottom - y,
+        text: roots
+            .iter()
+            .map(|r| r.text.as_str())
+            .find(|text| !text.is_empty())
+            .unwrap_or_default()
+            .to_owned(),
+    })
+}
+
+/// Groups the component uses of `shots` (a capture and its element map each) by component and
+/// the file that defines it: two components of one name in different files stay two.
+/// `files` are the project's files, relative to the app, for components whose elements say
+/// nowhere where they are defined.
+fn gather(shots: &[(Capture, Value)], files: &[String]) -> Vec<ComponentGroup> {
+    let mut found: BTreeMap<(String, Option<String>), Vec<Found>> = BTreeMap::new();
+    for (capture, map) in shots {
+        let screen_area = i64::from(capture.width) * i64::from(capture.height);
+        for instance in instances(map) {
+            let Instance {
+                name,
+                file,
+                x,
+                y,
+                w,
+                h,
+                text,
+            } = instance;
             let on_screen =
                 x >= 0 && y >= 0 && x < i64::from(capture.width) && y < i64::from(capture.height);
             // A page fills the screen; a hidden element has no size.
@@ -145,30 +276,11 @@ fn gather(shots: &[(Capture, Value)], files: &[String]) -> Vec<ComponentGroup> {
             {
                 continue;
             }
-            let file = element
-                .get("src")
-                .and_then(Value::as_str)
-                .and_then(source_file);
             // The frame around every screen is charet's own, not the project's.
-            if file.is_some_and(|f| f.starts_with(".charet/")) {
+            if file.as_deref().is_some_and(|f| f.starts_with(".charet/")) {
                 continue;
             }
-            if let Some(file) = file {
-                *defined
-                    .entry(name.clone())
-                    .or_default()
-                    .entry(file.to_owned())
-                    .or_default() += 1;
-            }
-            let text = element
-                .get("text")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .trim()
-                .chars()
-                .take(MAX_TEXT)
-                .collect();
-            found.entry(name).or_default().push(Found {
+            found.entry((name, file)).or_default().push(Found {
                 screen: capture.target.clone(),
                 x,
                 y,
@@ -178,28 +290,25 @@ fn gather(shots: &[(Capture, Value)], files: &[String]) -> Vec<ComponentGroup> {
             });
         }
     }
-    let mut groups: Vec<ComponentGroup> = found
+    // A component whose elements do not say where it is defined is found by its file name; one
+    // still without a file belongs to a library.
+    let mut by_file: BTreeMap<(String, String), Vec<Found>> = BTreeMap::new();
+    for ((name, file), uses) in found {
+        let Some(file) = file.or_else(|| definition_file(&name, files)) else {
+            continue;
+        };
+        by_file.entry((name, file)).or_default().extend(uses);
+    }
+    let mut groups: Vec<ComponentGroup> = by_file
         .into_iter()
-        .filter_map(|(name, uses)| {
-            let file = defined
-                .get(&name)
-                .and_then(|files| {
-                    // The file most elements come from; the first by name when they tie.
-                    files
-                        .iter()
-                        .max_by(|a, b| a.1.cmp(b.1).then_with(|| b.0.cmp(a.0)))
-                })
-                .map(|(file, _)| file.clone())
-                .or_else(|| definition_file(&name, files))?;
-            Some(ComponentGroup {
-                uses: uses.len(),
-                instances: pick(uses),
-                name,
-                file,
-            })
+        .map(|((name, file), uses)| ComponentGroup {
+            uses: uses.len(),
+            instances: pick(uses),
+            name,
+            file,
         })
         .collect();
-    groups.sort_by(|a, b| (dir(&a.file), &a.name).cmp(&(dir(&b.file), &b.name)));
+    groups.sort_by(|a, b| (dir(&a.file), &a.name, &a.file).cmp(&(dir(&b.file), &b.name, &b.file)));
     groups
 }
 
@@ -340,6 +449,13 @@ mod tests {
         if let Some(src) = src {
             element["src"] = json!(src);
         }
+        element
+    }
+
+    /// A root element used at `site`.
+    fn root_used(site: &str, chain: &[&str], src: &str, at: [i64; 4], text: &str) -> Value {
+        let mut element = root(chain, Some(src), at, text);
+        element["use"] = json!(site);
         element
     }
 
@@ -562,5 +678,132 @@ mod tests {
             .map(|g| g.name)
             .collect();
         assert_eq!(names, ["Beta", "Zed", "Alpha"]);
+    }
+
+    #[test]
+    fn a_component_that_returns_several_elements_is_one_use() {
+        // Two roots at one place on different lines of the file: a fragment.
+        let home = json!([
+            root_used(
+                "src/Home.tsx:4:5",
+                &["Meta"],
+                "src/Meta.tsx:10:5",
+                [10, 10, 100, 20],
+                "By"
+            ),
+            root_used(
+                "src/Home.tsx:4:5",
+                &["Meta"],
+                "src/Meta.tsx:20:5",
+                [10, 40, 100, 30],
+                ""
+            ),
+        ]);
+        let groups = gather(&[(capture("home"), home)], &[]);
+        let meta = group(&groups, "Meta");
+        assert_eq!(meta.uses, 1, "{meta:?}");
+        let only = &meta.instances[0];
+        assert_eq!(
+            (only.x, only.y, only.w, only.h),
+            (10, 10, 100, 60),
+            "the box holds both roots"
+        );
+        assert_eq!(only.text.as_deref(), Some("By"));
+    }
+
+    #[test]
+    fn the_items_of_a_list_are_a_use_each_even_when_each_is_a_fragment() {
+        let site = "src/Home.tsx:4:5";
+        let rows = |line: &str, top: i64| -> Vec<Value> {
+            (0..3)
+                .map(|i| root_used(site, &["Row"], line, [10, top + i * 100, 100, 20], ""))
+                .collect()
+        };
+        let both = [rows("src/Row.tsx:3:3", 10), rows("src/Row.tsx:9:3", 40)].concat();
+        let home = json!(both);
+        let groups = gather(&[(capture("home"), home)], &[]);
+        let row = group(&groups, "Row");
+        assert_eq!(row.uses, 3, "three items, two roots each");
+        assert!(row.instances.iter().all(|i| i.h == 50), "{row:?}");
+
+        let plain = json!(rows("src/Row.tsx:3:3", 10));
+        assert_eq!(
+            group(&gather(&[(capture("home"), plain)], &[]), "Row").uses,
+            3
+        );
+    }
+
+    #[test]
+    fn components_of_one_name_in_different_files_stay_apart() {
+        let home = json!([
+            root(
+                &["Card"],
+                Some("src/a/card.tsx:2:3"),
+                [10, 10, 100, 50],
+                "A"
+            ),
+            root(
+                &["Card$1"],
+                Some("src/b/card.tsx:2:3"),
+                [10, 90, 100, 50],
+                "B"
+            ),
+            root(
+                &["Card$1"],
+                Some("src/b/card.tsx:2:3"),
+                [10, 170, 100, 50],
+                "B2"
+            ),
+        ]);
+        let groups = gather(&[(capture("home"), home)], &[]);
+        let cards: Vec<_> = groups
+            .iter()
+            .map(|g| (g.name.as_str(), g.file.as_str(), g.uses))
+            .collect();
+        assert_eq!(
+            cards,
+            [("Card", "src/a/card.tsx", 1), ("Card", "src/b/card.tsx", 2)]
+        );
+    }
+
+    #[test]
+    fn a_screen_the_project_no_longer_has_is_not_counted() {
+        use crate::BuildState;
+        use crate::testing::{engine_with_fakes, file};
+
+        let (engine, fakes) = engine_with_fakes();
+        let import = crate::Import {
+            files: vec![file("src/button.tsx", "button")],
+            source: "test".into(),
+            commit: None,
+        };
+        engine
+            .create_project(&Actor::Local, "shop", "Shop", Some(import))
+            .unwrap();
+        engine
+            .preview(&Actor::Local, "shop", "main", false)
+            .unwrap();
+        fakes.workspace.finish(BuildState::Ready);
+        fakes.workspace.serve(".charet/manifest.json", MANIFEST);
+        let elements = json!([root(&["Button"], None, [10, 10, 80, 30], "Save")]);
+        // Captured when the screen "gone" still existed.
+        let mut old = capture("gone");
+        old.width = 800;
+        engine
+            .ports
+            .captures
+            .put("shop", &old, b"png", &elements)
+            .unwrap();
+        fakes.renderer.set_elements(elements);
+        engine
+            .capture(&Actor::Local, "shop", "main", &[], &["light".into()], false)
+            .unwrap();
+
+        let groups = engine.components(&Actor::Local, "shop", "light").unwrap();
+        assert_eq!(groups.len(), 1, "{groups:?}");
+        assert_eq!(
+            groups[0].uses, 2,
+            "the two screens of the manifest; the one it dropped is not counted"
+        );
     }
 }

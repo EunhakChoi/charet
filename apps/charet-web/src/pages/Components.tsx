@@ -47,11 +47,15 @@ export function Components() {
     storiesOf.set(story.component, [...(storiesOf.get(story.component) ?? []), story]);
   const found = used.data?.components ?? [];
   const sections = new Map<string, Entry[]>();
+  // Components of one name in different files share the stories of that name: the first has them.
+  const storied = new Set<string>();
   for (const group of found) {
     const folder = dirOf(group.file) || t("web.components.rootFolder");
+    const stories = storied.has(group.name) ? [] : (storiesOf.get(group.name) ?? []);
+    storied.add(group.name);
     sections.set(folder, [
       ...(sections.get(folder) ?? []),
-      { name: group.name, used: group, stories: storiesOf.get(group.name) ?? [] },
+      { name: group.name, used: group, stories },
     ]);
   }
   const known = new Set(found.map((group) => group.name));
@@ -70,7 +74,7 @@ export function Components() {
             <h2 className="font-mono text-xs text-muted-foreground">{folder}</h2>
             {entries.map((entry) => (
               <article
-                key={entry.name}
+                key={`${entry.name}@${entry.used?.file ?? ""}`}
                 data-testid={`component-${entry.name}`}
                 className="flex flex-col gap-3"
               >

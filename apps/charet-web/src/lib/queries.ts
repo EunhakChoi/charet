@@ -90,6 +90,9 @@ export function useComponents(key: string, theme: Theme) {
           params: { path: { key }, query: { theme } },
         }),
       ),
+    // The screens are listed from the manifest, which waits for the build like useManifest does.
+    retry: (count, error) => error instanceof HttpError && error.code === "pending" && count < 400,
+    retryDelay: 1500,
   });
 }
 
