@@ -22,16 +22,29 @@ export function byComponent(stories: Story[]): ComponentStories[] {
   return [...found].map(([name, list]) => ({ name, stories: list }));
 }
 
+/**
+ * What a story sets, in order. A project built with the first SDK that had `props` wrote an
+ * object (`{ variant: "outline" }`, key order unreliable), later ones an array; builds stay in
+ * history and in use, so both are read.
+ */
+export function propsOf(story: Story): { name: string; value: string }[] {
+  const props: unknown = story.props;
+  if (Array.isArray(props)) return props as { name: string; value: string }[];
+  if (props && typeof props === "object")
+    return Object.entries(props).map(([name, value]) => ({ name, value: String(value) }));
+  return [];
+}
+
 /** What `story` sets `name` to, when it sets it. */
 export function propValue(story: Story, name: string): string | undefined {
-  return story.props?.find((prop) => prop.name === name)?.value;
+  return propsOf(story).find((prop) => prop.name === name)?.value;
 }
 
 /** The props the stories of a component set (none when they are plain, titled states). */
 export function propChoices(stories: Story[]): PropChoice[] {
   const found = new Map<string, string[]>();
   for (const story of stories) {
-    for (const { name, value } of story.props ?? []) {
+    for (const { name, value } of propsOf(story)) {
       const values = found.get(name) ?? [];
       if (!values.includes(value)) values.push(value);
       found.set(name, values);
@@ -50,7 +63,7 @@ export function pickProp(stories: Story[], current: Story, name: string, value: 
   let bestKept = -1;
   for (const story of stories) {
     if (propValue(story, name) !== value) continue;
-    const kept = (current.props ?? []).filter(
+    const kept = propsOf(current).filter(
       (other) => other.name !== name && propValue(story, other.name) === other.value,
     ).length;
     if (kept > bestKept) {
@@ -76,5 +89,5 @@ export function firstStory(stories: Story[]): Story | undefined {
 
 /** The stories that set no props: states picked by their title, next to the prop picker. */
 export function plainStories(stories: Story[]): Story[] {
-  return stories.filter((story) => (story.props ?? []).length === 0);
+  return stories.filter((story) => propsOf(story).length === 0);
 }

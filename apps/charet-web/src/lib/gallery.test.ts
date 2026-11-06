@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Manifest } from "./api";
-import { byComponent, firstStory, pickProp, plainStories, propChoices } from "./gallery.ts";
+import {
+  byComponent,
+  firstStory,
+  pickProp,
+  plainStories,
+  propChoices,
+  propsOf,
+} from "./gallery.ts";
 
 type Story = Manifest["stories"][number];
 const size = { w: 480, h: 320 };
@@ -75,4 +82,13 @@ test("plain stories stay listed next to a component's props", () => {
   assert.deepEqual(plainStories(button), []);
   // Picking a prop from the plain state lands on a story that sets it.
   assert.equal(pickProp(mixed, mixed[3] as Story, "variant", "outline").id, "b-o-sm");
+});
+
+test("a manifest from the first SDK with props (an object) still reads", () => {
+  const old = { id: "o", component: "Button", title: "o", size, props: { variant: "outline" } };
+  const stories = [old as unknown as Story, story("d", "Button", { variant: "default" })];
+  assert.deepEqual(propsOf(stories[0] as Story), [{ name: "variant", value: "outline" }]);
+  assert.deepEqual(propChoices(stories), [{ name: "variant", values: ["outline", "default"] }]);
+  assert.equal(pickProp(stories, stories[1] as Story, "variant", "outline").id, "o");
+  assert.deepEqual(plainStories(stories), []);
 });
