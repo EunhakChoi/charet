@@ -2505,6 +2505,11 @@ components:
                 description: What this state sets, per prop (the Components view's prop picker)
                 additionalProperties:
                   type: string
+              propOrder:
+                type: array
+                description: The props' names in the order the story declared them (object keys are not kept in order)
+                items:
+                  type: string
               code:
                 type: string
                 description: The code that makes this state, shown next to the preview

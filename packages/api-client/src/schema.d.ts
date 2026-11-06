@@ -1507,6 +1507,8 @@ export interface components {
                 props?: {
                     [key: string]: string;
                 };
+                /** @description The props' names in the order the story declared them (object keys are not kept in order) */
+                propOrder?: string[];
                 /** @description The code that makes this state, shown next to the preview */
                 code?: string;
             }[];

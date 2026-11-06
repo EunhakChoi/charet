@@ -145,11 +145,12 @@ test("variants makes a story for every combination of the props", () => {
   const project = defineProject({ ...base, stories });
   const manifest = toManifest(project);
   assert.deepEqual(manifest.stories[1]?.props, { variant: "default", size: "lg" });
+  assert.deepEqual(manifest.stories[1]?.propOrder, ["variant", "size"]);
   assert.equal(manifest.stories[1]?.code, '<Button variant="default" size="lg">Save</Button>');
   assert.deepEqual(
     Object.keys(toManifest(base).stories[0] ?? {}),
     ["id", "component", "title", "size"],
-    "a plain story has no props or code",
+    "a plain story has no props, order or code",
   );
 });
 

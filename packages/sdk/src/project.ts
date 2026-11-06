@@ -267,6 +267,8 @@ export interface Manifest {
     title: string;
     size: Size;
     props?: Record<string, string>;
+    /** The props' names in the order the story declared them (JSON object keys do not keep it). */
+    propOrder?: string[];
     code?: string;
   }[];
 }
@@ -324,7 +326,9 @@ export function toManifest(project: ProjectDef): Manifest {
       component: s.component,
       title: s.title,
       size: s.size ?? DEFAULT_STORY_SIZE,
-      ...(s.props && Object.keys(s.props).length > 0 ? { props: s.props } : {}),
+      ...(s.props && Object.keys(s.props).length > 0
+        ? { props: s.props, propOrder: Object.keys(s.props) }
+        : {}),
       ...(s.code ? { code: s.code } : {}),
     })),
   };
