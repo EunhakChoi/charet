@@ -181,7 +181,9 @@ wrong app. On main, `charet pull`. On a branch, `charet pull` fetches the branch
 `charet branch catch-up` first (`charet status` says which one you are on). If catch-up names clashing
 files, the branch did not move: reconcile those files against main, or start from a clean main
 checkout, before editing. Do not continue on the old branch head. Then fix what the new code broke in `.charet/` (screens, mocks, stories),
-push, `charet check`, and capture again so the team sees the real UI. When both sides changed the same file, do not choose
+then verify as in Workflow 3: look at branch pictures with `--out`, merge, and capture from main so
+the team sees the real UI (a push moves the checkout onto a branch, and a bare capture there does
+not show the fix). When both sides changed the same file, do not choose
 silently: show the user both changes and ask which one wins.
 
 **charet ahead of the repo** (merged versions not in the repo yet): `charet handoff` lists them.
