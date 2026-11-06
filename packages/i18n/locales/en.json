@@ -105,7 +105,7 @@
   "web.flows.step": "Step {n} of {total}",
   "web.flows.prev": "Previous",
   "web.flows.next": "Next",
-  "web.components.empty": "No stories yet. Add them in .charet/project.tsx.",
+  "web.components.empty": "No stories yet. Add them in .charet/project.tsx, or make many at once with variants().",
   "web.versions.handoff": "In the repo · {commit}",
   "web.versions.handoffBy": "Marked by {name}, {when}",
   "web.versions.inRepo": "In the product repo",
@@ -564,5 +564,8 @@
   "web.providers.codeFor": "Sign-in code for {provider}",
   "web.providers.submitCode": "Finish sign-in",
   "web.providers.reopen": "Open the page again",
-  "web.providers.tryAgain": "Try signing in again"
+  "web.providers.tryAgain": "Try signing in again",
+  "web.components.openStory": "Open",
+  "web.components.states": "states",
+  "web.components.title": "Components"
 }

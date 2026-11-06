@@ -2500,6 +2500,14 @@ components:
                 type: string
               size:
                 $ref: "#/components/schemas/Size"
+              props:
+                type: object
+                description: What this state sets, per prop (the Components view's prop picker)
+                additionalProperties:
+                  type: string
+              code:
+                type: string
+                description: The code that makes this state, shown next to the preview
     Person:
       type: object
       required: [id, name]

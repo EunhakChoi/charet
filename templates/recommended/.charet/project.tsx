@@ -1,4 +1,4 @@
-import { defineProject } from "@charet/sdk";
+import { defineProject, variants } from "@charet/sdk";
 import { HttpResponse, http } from "msw";
 import { Button } from "@/components/ui/button";
 import { sampleTasks, tasks } from "./mocks.ts";
@@ -35,18 +35,24 @@ export default defineProject({
       ],
     },
   ],
+  // One story per combination: the Components view gets a picker for each prop.
   stories: [
-    {
-      id: "button-default",
+    ...variants({
       component: "Button",
-      title: "Default",
-      render: () => <Button>Save</Button>,
-    },
+      props: { variant: ["default", "secondary", "outline"], size: ["sm", "default", "lg"] },
+      render: (p) => (
+        <Button variant={p.variant as "default"} size={p.size as "default"}>
+          Save
+        </Button>
+      ),
+      code: (p) => `<Button variant="${p.variant}" size="${p.size}">Save</Button>`,
+    }),
+    // A state that is not a combination of props is an ordinary story, listed beside the picker.
     {
-      id: "button-outline",
+      id: "button-loading",
       component: "Button",
-      title: "Outline",
-      render: () => <Button variant="outline">Cancel</Button>,
+      title: "Loading",
+      render: () => <Button disabled>Saving…</Button>,
     },
   ],
 });

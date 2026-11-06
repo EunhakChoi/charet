@@ -16,7 +16,7 @@ reads. It only acts in dev and in charet's preview builds; the app's own build i
 ## project.tsx
 
 ```tsx
-import { defineProject } from "@charet/sdk";
+import { defineProject, variants } from "@charet/sdk";
 import { HttpResponse, http } from "msw";
 import { Button } from "@/components/ui/button";
 import { sampleTasks, tasks } from "./mocks.ts";
@@ -50,9 +50,12 @@ export default defineProject({
       steps: ["tasks-list", "tasks-open", { id: "task-detail", title: "Task detail", note: "planned" }],
     },
   ],
-  stories: [
-    { id: "button-default", component: "Button", title: "Default", render: () => <Button>Save</Button> },
-  ],
+  stories: variants({
+    component: "Button",
+    props: { variant: ["default", "outline"] },
+    render: (p) => <Button variant={p.variant as "default"}>Save</Button>,
+    code: (p) => `<Button variant="${p.variant}">Save</Button>`,
+  }),
 });
 ```
 
@@ -72,8 +75,16 @@ Rules (checked when the project loads):
 - `setup(kit)`: `kit.click(selector, text?)`, `kit.fill(selector, value)`, `kit.find(selector, text?)`,
   `kit.wait(ms)`. Selectors are CSS, searched in the whole document (dialogs in portals too); text
   matches the trimmed text or the `aria-label`.
-- Stories are grouped by `component` in the Components view. A story's `mocks` start MSW like a
-  screen's.
+- Stories are grouped by `component` in the Components view: one block per component with a live
+  preview of the picked state, the prop picker and the code to copy. A story's `mocks` start MSW
+  like a screen's.
+- Show a component bare, with example text and no app around it. For a component with props, make
+  every combination with `variants()` instead of writing each story: `props` lists the values per
+  prop (they become the picker), `render` gets one combination, `code` returns the snippet shown
+  beside it. Ids are made from the component and the values (`button-variant-outline-size-sm`);
+  more than 200 combinations is an error. Plain stories (`{ id, component, title, render }`) show
+  as a row of states. A component that needs data or context (a page header) needs a story with
+  `mocks` and a `render` that supplies what it expects.
 
 ## Imported apps
 
