@@ -1,0 +1,8 @@
+schema_version: "1.1"
+name: repo-ahead-of-charet
+expected_outcome: |
+  Before handling the comments, the answer checks whether charet matches the product repo with
+  `charet handoff -p <project>` run inside the repo. If the repo changed, it brings the changes in with
+  `charet import --update`, then refreshes the charet checkout (`charet pull`) before fixing `.charet/`
+  and verifying through the usual push, check and capture steps. It does not call charet current when it
+  could not check.

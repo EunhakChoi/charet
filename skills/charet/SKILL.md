@@ -1,6 +1,6 @@
 ---
 name: charet
-description: Work with charet, a code-first design board where an app's real React UI is rendered with mock APIs as screens, flows and component stories that a team reviews and comments on. Use this skill whenever the user mentions charet or a charet project, design or UI review comments to handle, screens, flows or stories, a `.charet/` folder or a charet checkout, putting an app on charet (import), or wants a UI change checked, captured or shown to the team — even if they only say "check the screen", "the designer left comments" or "make this reviewable".
+description: Work with charet, a code-first design board where an app's real React UI is rendered with mock APIs as screens, flows and component stories that a team reviews and comments on. Use this skill whenever the user mentions charet or a charet project, design or UI review comments to handle, screens, flows or stories, a `.charet/` folder or a charet checkout, putting an app on charet (import), or wants a UI change checked, captured or shown to the team — even if they only say "check the screen", "the designer left comments" or "make this reviewable". Also use it when the product repo was edited outside charet ("I changed the UI in the repo directly", "charet looks out of date", repo drift, `charet import --update`).
 ---
 
 # charet
@@ -54,6 +54,7 @@ charet ls                # screens, stories, flows and whether their captures ar
 
 ## Workflow 1 · Handle comments
 
+0. Recommended: confirm charet matches the product repo (Workflow 4c).
 1. `charet comments`, then `charet comments show c12`. It saves the snapshot the comment was made
    on and prints its path, the pinned element, its component chain (outermost › innermost) and
    the source location.
@@ -74,6 +75,7 @@ act on the latest content.
 
 A flow written before the code is the plan the team can review; planned steps are your to-do list.
 
+0. Recommended: confirm charet matches the product repo (Workflow 4c).
 1. In `.charet/project.tsx`, add or extend a flow. Steps that do not exist yet are planned:
    `{ id: "export-dialog", title: "Export dialog", note: "CSV, date range" }`.
 2. Build the UI in the app.
@@ -154,6 +156,32 @@ flow. Write them in `.charet/project.tsx`:
 - A component that reaches the app's API client when it loads is imported lazily inside the story.
 
 `references/project.md` has the rules and examples. Then push and check like any other change.
+
+## Workflow 4c · Is charet in sync with the product repo?
+
+charet keeps its own copy of the app, so it goes stale when someone edits the repo directly. Screens
+captured from a stale copy show a UI nobody runs. Check before changing UI through charet, and
+before editing the repo directly. Importing and handing off are admin actions; anyone else reports
+the result to an admin.
+
+```bash
+cd <product repo>, on the branch the team ships from
+charet handoff -p <project>
+```
+
+| It reports | Do |
+|---|---|
+| nothing new on either side | Carry on. |
+| the repo changed (commits or uncommitted edits) | `charet import --update -p <project>`, below. Commit uncommitted edits first: the import records the repo's `HEAD`. |
+| versions in charet not in the repo, repo unchanged | Export them (Workflow 5) before anyone edits the repo directly, or the next import fights over the same lines. |
+| both: the repo changed and charet has versions not handed off | Import first (the import keeps those versions), then export (Workflow 5, drift first). |
+| drift `unknown` | You cannot tell. Say so and ask an admin; do not call charet current. |
+| nothing at all (repo or server unreachable) | Say you could not check. |
+
+After an import, main moved on the server but your checkout did not: `charet pull` (on a branch,
+`charet branch catch-up` first; a clash is settled as in Workflow 3). Then fix what the new code broke
+in `.charet/`, and verify and capture as in Workflow 3. A file changed on both sides is refused by the
+import: show the user both changes and ask which wins.
 
 ## Workflow 5 · Hand changes to the product repo (admins)
 
