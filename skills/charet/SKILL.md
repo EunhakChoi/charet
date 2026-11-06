@@ -166,7 +166,9 @@ other. Check before changing UI through charet (Workflows 1 and 2), and before e
 directly. Importing and handing off are admin actions; a non-admin reports
 the drift to an admin instead of fixing it.
 
-**Repo ahead of charet** (someone changed the UI in the product repo):
+**Repo ahead of charet** (someone changed the UI in the product repo). Run the import steps only
+when `charet handoff` reports drift; with none, the import is refused ("nothing new since the last
+import or handoff") and charet is already current, so go on with your work:
 
 ```bash
 cd <product repo>

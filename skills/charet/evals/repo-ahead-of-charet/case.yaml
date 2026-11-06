@@ -2,9 +2,9 @@ schema_version: "1.1"
 name: repo-ahead-of-charet
 expected_outcome: |
   Before handling comments, the answer checks whether charet matches the product repo (drift) by running
-  `charet handoff -p <project>` inside the repo, checks the scope with `charet import --update --dry-run`, then
-  brings the repo's changes in with `charet import --update`. It then returns to the charet checkout and
-  refreshes it (`charet pull`, and `charet branch catch-up` first when the checkout is on a branch). It fixes
+  `charet handoff -p <project>` inside the repo, checks the scope with `charet import --update --dry-run`, then,
+  only if drift was reported, brings the repo's changes in with `charet import --update`. It then returns to the charet checkout and
+  refreshes it (`charet pull`, and `charet branch catch-up` first when the checkout is on a branch, settling any clash it names). It fixes
   screens, mocks and stories, verifies the branch with `--out` captures, then merges and captures from main
   before resolving comments. It says to ask the user when both sides changed the
   same file, and says it could not check if the repo or server is not reachable.
