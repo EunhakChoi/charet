@@ -179,8 +179,9 @@ The import advances main on the server only. Go back to the charet checkout and 
 editing: a checkout made earlier still holds the old UI, and work started from it verifies the
 wrong app. On main, `charet pull`. On a branch, `charet pull` fetches the branch's own head, so run
 `charet branch catch-up` first (`charet status` says which one you are on). If catch-up names clashing
-files, the branch did not move: reconcile those files against main, or start from a clean main
-checkout, before editing. Do not continue on the old branch head. Then fix what the new code broke in `.charet/` (screens, mocks, stories),
+files, the branch did not move: settle them as in Workflow 3 ("Merge refused with a clash":
+`charet pull`, settle, push, `charet branch catch-up` again, `charet pull`) or start from a clean
+main checkout, before verifying. Do not continue on the old branch head. Then fix what the new code broke in `.charet/` (screens, mocks, stories),
 then verify as in Workflow 3: look at branch pictures with `--out`, merge, and capture from main so
 the team sees the real UI (a push moves the checkout onto a branch, and a bare capture there does
 not show the fix). When both sides changed the same file, do not choose
