@@ -15,6 +15,11 @@ test("a component's state is picked by its props and shown live", async ({ page 
     "aria-pressed",
     "true",
   );
+  // The props come in the order the story declared them (variant, then size), not sorted.
+  await expect(button.locator('[data-testid^="prop-Button-"]').first()).toHaveAttribute(
+    "data-testid",
+    /prop-Button-variant-/,
+  );
 
   await button.getByTestId("prop-Button-variant-outline").click();
   await button.getByTestId("prop-Button-size-lg").click();
@@ -26,6 +31,14 @@ test("a component's state is picked by its props and shown live", async ({ page 
   // The preview is the real component on the preview origin, not a picture.
   const frame = button.frameLocator('iframe[title="button-variant-outline-size-lg"]');
   await expect(frame.getByRole("button", { name: "Save" })).toBeVisible({ timeout: 30_000 });
+  // A story sits in the middle of its frame.
+  const framed = await button
+    .locator('iframe[title="button-variant-outline-size-lg"]')
+    .boundingBox();
+  const shown = await frame.getByRole("button", { name: "Save" }).boundingBox();
+  if (!framed || !shown) throw new Error("no boxes");
+  expect(Math.abs(shown.x + shown.width / 2 - (framed.x + framed.width / 2))).toBeLessThan(16);
+  expect(Math.abs(shown.y + shown.height / 2 - (framed.y + framed.height / 2))).toBeLessThan(16);
 
   // A state that sets no props stays reachable beside the picker, and so do the props again.
   await button.getByTestId("state-Button-Loading").click();

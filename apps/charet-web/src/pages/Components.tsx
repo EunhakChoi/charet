@@ -5,7 +5,14 @@ import { copyText } from "@/components/CopyOnce";
 import { Live } from "@/components/Live";
 import { Button } from "@/components/ui/button";
 import type { Manifest } from "@/lib/api";
-import { byComponent, firstStory, pickProp, plainStories, propChoices } from "@/lib/gallery";
+import {
+  byComponent,
+  firstStory,
+  pickProp,
+  plainStories,
+  propChoices,
+  propValue,
+} from "@/lib/gallery";
 import { useT } from "@/lib/i18n";
 import { useProjectContext } from "@/lib/project";
 import { useScreenTheme } from "@/lib/theme";
@@ -108,7 +115,7 @@ function Gallery({ name, stories }: { name: string; stories: Story[] }) {
               testId={`prop-${name}-${prop.name}`}
               options={prop.values.map((value) => ({
                 value,
-                picked: story.props?.[prop.name] === value,
+                picked: propValue(story, prop.name) === value,
                 onPick: () => setPicked(pickProp(stories, story, prop.name, value).id),
               }))}
             />
@@ -130,7 +137,7 @@ function Gallery({ name, stories }: { name: string; stories: Story[] }) {
       <div className="min-w-0">
         <div
           className={cn(
-            "sticky top-4 flex min-h-72 items-center justify-center rounded-2xl border bg-background p-6",
+            "sticky top-4 flex min-h-72 items-center justify-center rounded-2xl border bg-muted p-6",
           )}
         >
           <Live projectKey={key} kind="story" id={story.id} theme={theme} size={story.size} />

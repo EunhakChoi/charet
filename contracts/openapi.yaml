@@ -2501,10 +2501,16 @@ components:
               size:
                 $ref: "#/components/schemas/Size"
               props:
-                type: object
-                description: What this state sets, per prop (the Components view's prop picker)
-                additionalProperties:
-                  type: string
+                type: array
+                description: What this state sets, per prop, in the order it declared them (the Components view's prop picker)
+                items:
+                  type: object
+                  required: [name, value]
+                  properties:
+                    name:
+                      type: string
+                    value:
+                      type: string
               code:
                 type: string
                 description: The code that makes this state, shown next to the preview

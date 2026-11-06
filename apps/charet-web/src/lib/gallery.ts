@@ -22,11 +22,16 @@ export function byComponent(stories: Story[]): ComponentStories[] {
   return [...found].map(([name, list]) => ({ name, stories: list }));
 }
 
+/** What `story` sets `name` to, when it sets it. */
+export function propValue(story: Story, name: string): string | undefined {
+  return story.props?.find((prop) => prop.name === name)?.value;
+}
+
 /** The props the stories of a component set (none when they are plain, titled states). */
 export function propChoices(stories: Story[]): PropChoice[] {
   const found = new Map<string, string[]>();
   for (const story of stories) {
-    for (const [name, value] of Object.entries(story.props ?? {})) {
+    for (const { name, value } of story.props ?? []) {
       const values = found.get(name) ?? [];
       if (!values.includes(value)) values.push(value);
       found.set(name, values);
@@ -44,9 +49,9 @@ export function pickProp(stories: Story[], current: Story, name: string, value: 
   let best: Story | undefined;
   let bestKept = -1;
   for (const story of stories) {
-    if (story.props?.[name] !== value) continue;
-    const kept = Object.entries(current.props ?? {}).filter(
-      ([other, v]) => other !== name && story.props?.[other] === v,
+    if (propValue(story, name) !== value) continue;
+    const kept = (current.props ?? []).filter(
+      (other) => other.name !== name && propValue(story, other.name) === other.value,
     ).length;
     if (kept > bestKept) {
       best = story;
@@ -64,12 +69,12 @@ export function firstStory(stories: Story[]): Story | undefined {
   );
   return (
     stories.find((story) =>
-      Object.entries(wanted).every(([name, v]) => story.props?.[name] === v),
+      Object.entries(wanted).every(([name, v]) => propValue(story, name) === v),
     ) ?? stories[0]
   );
 }
 
 /** The stories that set no props: states picked by their title, next to the prop picker. */
 export function plainStories(stories: Story[]): Story[] {
-  return stories.filter((story) => Object.keys(story.props ?? {}).length === 0);
+  return stories.filter((story) => (story.props ?? []).length === 0);
 }

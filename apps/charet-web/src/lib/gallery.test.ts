@@ -10,7 +10,7 @@ const story = (id: string, component: string, props?: Record<string, string>): S
   component,
   title: id,
   size,
-  ...(props ? { props } : {}),
+  ...(props ? { props: Object.entries(props).map(([name, value]) => ({ name, value })) } : {}),
 });
 
 // A matrix with a gap: there is no outline + lg.

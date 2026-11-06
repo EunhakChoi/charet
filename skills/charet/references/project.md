@@ -136,6 +136,9 @@ void startFrame({
 });
 ```
 
+`wrapStory` adds what a story needs around it (providers, padding); the frame then puts the result
+in the middle of the page.
+
 **Import the app inside `renderScreen`, not at the top of `frame.tsx`.** The mocks answer `fetch` and
 XHR from the moment `startFrame` has started them. An app that builds its API client while its
 modules load (a module-level `createClient(...)`, or `const f = fetch`) keeps the `fetch` it saw

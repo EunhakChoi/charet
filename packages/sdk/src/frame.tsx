@@ -20,11 +20,27 @@ export interface FrameOptions {
     screen: ScreenDef<RequestHandler>,
     route: string,
   ) => ReactNode | Promise<ReactNode>;
-  /** Wraps stories, e.g. with the app's theme provider. */
+  /** Wraps stories, e.g. with the app's theme provider. The frame puts the result in the middle. */
   wrapStory?: (node: ReactNode) => ReactNode;
   /** Root element id (default `root`). */
   rootId?: string;
 }
+
+/** Every story sits in the middle of the page, with room around. */
+const centered = (node: ReactNode) => (
+  <div
+    style={{
+      boxSizing: "border-box",
+      display: "flex",
+      minHeight: "100vh",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 24,
+    }}
+  >
+    {node}
+  </div>
+);
 
 /** Logged when a screen calls an API with no handler; the charet reports it as a missing mock. */
 export const MISSING_MOCK = "[charet] missing mock";
@@ -62,7 +78,7 @@ export async function startFrame(options: FrameOptions): Promise<void> {
     if (!story) return fail(container, `unknown story "${storyId}"`);
     const handlers = [...(story.mocks ?? []), ...(project.mocks ?? [])];
     if (handlers.length > 0) await startMocks(handlers);
-    node = (options.wrapStory ?? ((n) => n))(story.render());
+    node = centered((options.wrapStory ?? ((n) => n))(story.render()));
   } else {
     return fail(container, "pass ?screen=<id> or ?story=<id>");
   }
