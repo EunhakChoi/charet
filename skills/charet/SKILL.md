@@ -138,6 +138,23 @@ vite config, frame, project, mocks) in the checkout, push (with `--merge`) and c
 and lockfile stay exactly as in its repository. Follow `references/import.md` step by step — it
 covers getting the SDK, the files to write and the usual failures.
 
+## Workflow 4b · Show components (the Components view)
+
+The web tool's tabs are Screens, Flows, Components, Branches, Versions and Code. Three of them show
+what a project declares: **Screens** (a page in one state), **Flows** (the order of screens) and
+**Components** (parts, each shown bare with example text); the others are about changes (Branches,
+Versions) and source (Code). A **story** is one state of a component, as in Storybook; it is not a
+flow. Write them in `.charet/project.tsx`:
+
+- Make every combination of a component's props with `variants({ component, props, render, code })`
+  instead of one story per state. The view gets a prop picker, a live preview and the code to copy.
+- A component that needs data, context or a provider (a page header, a list row) is a feature
+  component: give its stories `group: "Feature"` and a representative sample as the default. Never
+  show it with empty props.
+- A component that reaches the app's API client when it loads is imported lazily inside the story.
+
+`references/project.md` has the rules and examples. Then push and check like any other change.
+
 ## Workflow 5 · Hand changes to the product repo (admins)
 
 Merged versions live in charet until someone puts them in the product repo. Do it only when the
@@ -191,6 +208,6 @@ draft branch shows up for the whole team.
 ## References
 
 - `references/cli.md` — every command and its output
-- `references/project.md` — the `.charet/` contract: project.tsx rules, setup kit, frame, static files
+- `references/project.md` — the `.charet/` contract: project.tsx rules (screens, flows, stories and `variants()`), setup kit, frame, static files
 - `references/mocks.md` — writing MSW handlers
 - `references/import.md` — bringing an existing app onto charet
