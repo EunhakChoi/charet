@@ -171,8 +171,8 @@ the drift to an admin instead of fixing it.
 ```bash
 cd <product repo>
 charet handoff -p <project>                    # lists the repo's commits and uncommitted edits to imported files
-charet import --update -p <project> --dry-run  # what would come in; a file both sides changed is refused
-charet import --update -p <project>            # brings the repo's files in as an import version
+charet import --update -p <project> --dry-run  # only the scope: how many files, from which repo state
+charet import --update -p <project>            # brings the repo's files in as an import version; a file both sides changed is refused here
 ```
 
 The import advances main on the server only. Go back to the charet checkout and refresh it before

@@ -2,7 +2,7 @@ schema_version: "1.1"
 name: repo-ahead-of-charet
 expected_outcome: |
   Before handling comments, the answer checks whether charet matches the product repo (drift) by running
-  `charet handoff -p <project>` inside the repo, previews with `charet import --update --dry-run`, then
+  `charet handoff -p <project>` inside the repo, checks the scope with `charet import --update --dry-run`, then
   brings the repo's changes in with `charet import --update`. It then returns to the charet checkout and
   refreshes it (`charet pull`, and `charet branch catch-up` first when the checkout is on a branch). It fixes
   screens, mocks and stories, verifies the branch with `--out` captures, then merges and captures from main
