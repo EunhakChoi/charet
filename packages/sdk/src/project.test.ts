@@ -161,3 +161,28 @@ test("variants refuses a matrix too big to be a gallery", () => {
     new RegExp(`225 stories \\(at most ${MAX_VARIANTS}\\)`),
   );
 });
+
+test("a story's group goes from variants and from a plain story into the manifest", () => {
+  const stories = [
+    ...variants({
+      component: "Header",
+      group: "Feature",
+      props: { signedIn: ["true", "false"] },
+      render: () => null,
+    }),
+    {
+      id: "header-plain",
+      component: "Header",
+      title: "Plain",
+      group: "Feature",
+      render: () => null,
+    },
+    { id: "button-plain", component: "Button", title: "Plain", render: () => null },
+  ];
+  const manifest = toManifest(defineProject({ ...base, stories }));
+  assert.deepEqual(
+    manifest.stories.map((s) => s.group),
+    ["Feature", "Feature", "Feature", undefined],
+  );
+  assert.equal("group" in (manifest.stories[3] ?? {}), false, "no group: the key is left out");
+});

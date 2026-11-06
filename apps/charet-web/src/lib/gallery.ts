@@ -92,3 +92,21 @@ export function firstStory(stories: Story[]): Story | undefined {
 export function plainStories(stories: Story[]): Story[] {
   return stories.filter((story) => propsOf(story).length === 0);
 }
+
+/** The group of a story without one: the base components. */
+export const BASE_GROUP = "";
+
+/** The groups the stories are listed under: the base group first (when any is in it), then the rest as they appear. */
+export function groupNames(stories: Story[]): string[] {
+  const names: string[] = [];
+  for (const story of stories) {
+    const name = story.group ?? BASE_GROUP;
+    if (!names.includes(name)) names.push(name);
+  }
+  return names.sort((a, b) => Number(b === BASE_GROUP) - Number(a === BASE_GROUP));
+}
+
+/** The stories listed under `group`. */
+export function inGroup(stories: Story[], group: string): Story[] {
+  return stories.filter((story) => (story.group ?? BASE_GROUP) === group);
+}

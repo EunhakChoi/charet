@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchTasks, type Task } from "@/api";
+import { TaskRow } from "@/components/TaskRow";
 import { Button } from "@/components/ui/button";
 
 export function TasksPage() {
@@ -38,11 +39,7 @@ export function TasksPage() {
       )}
       <ul className="divide-y divide-border rounded-md border border-border">
         {shown?.map((task) => (
-          <li key={task.id} className="flex items-center gap-3 px-4 py-3">
-            <span className={task.done ? "text-muted-foreground line-through" : ""}>
-              {task.title}
-            </span>
-          </li>
+          <TaskRow key={task.id} task={task} />
         ))}
       </ul>
     </main>

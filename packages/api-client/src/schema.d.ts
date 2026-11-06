@@ -1511,6 +1511,8 @@ export interface components {
                 propOrder?: string[];
                 /** @description The code that makes this state, shown next to the preview */
                 code?: string;
+                /** @description Which part of the Components view the component is listed under (default Base) */
+                group?: string;
             }[];
         };
         Person: {

@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Manifest } from "./api";
 import {
+  BASE_GROUP,
   byComponent,
   firstStory,
+  groupNames,
+  inGroup,
   pickProp,
   plainStories,
   propChoices,
@@ -116,4 +119,32 @@ test("a manifest without propOrder (an older SDK) still reads, in the object's o
     propsOf(odd).map((p) => p.name),
     ["b", "a"],
   );
+});
+
+test("groups list the base components first, then the others as they appear", () => {
+  const grouped = (id: string, group?: string): Story => ({
+    ...story(id, id),
+    ...(group ? { group } : {}),
+  });
+  const stories = [
+    grouped("a", "Feature"),
+    grouped("b"),
+    grouped("c", "Layout"),
+    grouped("d", "Feature"),
+  ];
+  assert.deepEqual(groupNames(stories), [BASE_GROUP, "Feature", "Layout"]);
+  assert.deepEqual(
+    inGroup(stories, "Feature").map((s) => s.id),
+    ["a", "d"],
+  );
+  assert.deepEqual(
+    inGroup(stories, BASE_GROUP).map((s) => s.id),
+    ["b"],
+  );
+  assert.deepEqual(
+    groupNames([grouped("x", "Feature")]),
+    ["Feature"],
+    "no base group, no empty tab",
+  );
+  assert.deepEqual(groupNames([]), []);
 });

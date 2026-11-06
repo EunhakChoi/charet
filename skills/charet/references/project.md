@@ -83,8 +83,13 @@ Rules (checked when the project loads):
   prop (they become the picker), `render` gets one combination, `code` returns the snippet shown
   beside it. Ids are made from the component and the values (`button-variant-outline-size-sm`);
   more than 200 combinations is an error. Plain stories (`{ id, component, title, render }`) show
-  as a row of states. A component that needs data or context (a page header) needs a story with
-  `mocks` and a `render` that supplies what it expects.
+  as a row of states.
+- A component that is not a plain building block (it needs data, context or a provider: a page
+  header, a list row) goes in its own group: `group: "Feature"` on its stories or on `variants()`.
+  The Components view switches between groups (`Base` for stories without one). Its default values
+  live in the story: `render` supplies a representative sample (a typical record, a signed-in user)
+  and `mocks` what it fetches, and only the props that change what it shows become `props`. Do not
+  leave the sample empty: a feature component shown with `undefined` props is an empty box.
 
 ## Imported apps
 
