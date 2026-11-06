@@ -86,6 +86,65 @@ export interface StoryDef<Node = unknown, Mock = unknown> {
   size?: Size;
   /** Request handlers for components that fetch, tried before the project's `mocks`. */
   mocks?: Mock[];
+  /**
+   * What this state sets (`{ variant: "outline", size: "sm" }`). The Components view lists each
+   * prop with its values and shows the story that matches the picked ones.
+   */
+  props?: Record<string, string>;
+  /** The code that makes this state, shown next to the preview. */
+  code?: string;
+}
+
+/** One component with every combination of some props to show (see `variants`). */
+export interface VariantsDef<Node = unknown, Mock = unknown> {
+  /** Component name, e.g. `Button`. */
+  component: string;
+  /** Each prop and the values to show; one story is made for every combination. */
+  props: Record<string, string[]>;
+  /** Renders the component with one combination (the example text goes here). */
+  render: (props: Record<string, string>) => Node;
+  /** The code that makes one combination. */
+  code?: (props: Record<string, string>) => string;
+  size?: Size;
+  mocks?: Mock[];
+}
+
+/** The most stories one `variants` call makes: a bigger matrix is a mistake, not a gallery. */
+export const MAX_VARIANTS = 200;
+
+/**
+ * The stories of a component for every combination of `props`, so one declaration gives the
+ * Components view a prop picker and a preview for each state. Ids are `button-variant-outline-size-sm`.
+ */
+export function variants<Node, Mock>(def: VariantsDef<Node, Mock>): StoryDef<Node, Mock>[] {
+  const slug = (text: string) =>
+    text
+      .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "");
+  const names = Object.keys(def.props);
+  const total = names.reduce((count, name) => count * (def.props[name]?.length ?? 0), 1);
+  if (total > MAX_VARIANTS)
+    throw new Error(`variants of ${def.component} make ${total} stories (at most ${MAX_VARIANTS})`);
+  const all = names.reduce<Record<string, string>[]>(
+    (found, name) =>
+      found.flatMap((one) => (def.props[name] ?? []).map((v) => ({ ...one, [name]: v }))),
+    [{}],
+  );
+  return all.map((props) => {
+    const parts = names.map((name) => `${name}-${props[name]}`);
+    return {
+      id: [slug(def.component), ...parts.map(slug)].join("-"),
+      component: def.component,
+      title: names.map((name) => props[name]).join(" · ") || "Default",
+      render: () => def.render(props),
+      props,
+      ...(def.code ? { code: def.code(props) } : {}),
+      ...(def.size ? { size: def.size } : {}),
+      ...(def.mocks ? { mocks: def.mocks } : {}),
+    };
+  });
 }
 
 export interface ProjectDef<Mock = unknown, Node = unknown> {
@@ -202,7 +261,14 @@ export interface Manifest {
     note: string;
     steps: { id: string; title: string; note: string; planned: boolean }[];
   }[];
-  stories: { id: string; component: string; title: string; size: Size }[];
+  stories: {
+    id: string;
+    component: string;
+    title: string;
+    size: Size;
+    props?: Record<string, string>;
+    code?: string;
+  }[];
 }
 
 export function toManifest(project: ProjectDef): Manifest {
@@ -258,6 +324,8 @@ export function toManifest(project: ProjectDef): Manifest {
       component: s.component,
       title: s.title,
       size: s.size ?? DEFAULT_STORY_SIZE,
+      ...(s.props && Object.keys(s.props).length > 0 ? { props: s.props } : {}),
+      ...(s.code ? { code: s.code } : {}),
     })),
   };
 }

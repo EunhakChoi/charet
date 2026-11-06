@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { defineProject, type ProjectDef, routeWithQuery, toManifest, validate } from "./project.ts";
+import {
+  defineProject,
+  MAX_VARIANTS,
+  type ProjectDef,
+  routeWithQuery,
+  toManifest,
+  validate,
+  variants,
+} from "./project.ts";
 
 const base: ProjectDef = {
   title: "Shop",
@@ -113,4 +121,42 @@ test("a screen's query goes into the route for a memory router", () => {
   // Nothing to add: the route as it was.
   assert.equal(routeWithQuery("/runs?x=1"), "/runs?x=1");
   assert.equal(routeWithQuery("/runs?x=1", {}), "/runs?x=1");
+});
+
+test("variants makes a story for every combination of the props", () => {
+  const stories = variants({
+    component: "ButtonGroup",
+    props: { variant: ["default", "outline"], size: ["sm", "lg"] },
+    render: (p) => `${p.variant}/${p.size}`,
+    code: (p) => `<Button variant="${p.variant}" size="${p.size}">Save</Button>`,
+  });
+  assert.deepEqual(
+    stories.map((s) => [s.id, s.title, s.props]),
+    [
+      ["button-group-variant-default-size-sm", "default · sm", { variant: "default", size: "sm" }],
+      ["button-group-variant-default-size-lg", "default · lg", { variant: "default", size: "lg" }],
+      ["button-group-variant-outline-size-sm", "outline · sm", { variant: "outline", size: "sm" }],
+      ["button-group-variant-outline-size-lg", "outline · lg", { variant: "outline", size: "lg" }],
+    ],
+  );
+  assert.equal(stories[2]?.render(), "outline/sm");
+  assert.equal(stories[2]?.code, '<Button variant="outline" size="sm">Save</Button>');
+  // They are ordinary stories: the project accepts them and the manifest carries props and code.
+  const project = defineProject({ ...base, stories });
+  const manifest = toManifest(project);
+  assert.deepEqual(manifest.stories[1]?.props, { variant: "default", size: "lg" });
+  assert.equal(manifest.stories[1]?.code, '<Button variant="default" size="lg">Save</Button>');
+  assert.deepEqual(
+    Object.keys(toManifest(base).stories[0] ?? {}),
+    ["id", "component", "title", "size"],
+    "a plain story has no props or code",
+  );
+});
+
+test("variants refuses a matrix too big to be a gallery", () => {
+  const values = Array.from({ length: 15 }, (_, i) => String(i));
+  assert.throws(
+    () => variants({ component: "Big", props: { a: values, b: values }, render: () => null }),
+    new RegExp(`225 stories \\(at most ${MAX_VARIANTS}\\)`),
+  );
 });

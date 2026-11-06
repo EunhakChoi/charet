@@ -169,10 +169,7 @@ test("installs .charet/package.json apart from the app", { timeout: 300_000 }, a
     }),
     [`${charet}/local/index.js`]: 'export const title = "Tasks";\n',
     [`${charet}/project.tsx`]: readFileSync(join(repo, charet, "project.tsx"), "utf8")
-      .replace(
-        'import { defineProject } from "@charet/sdk";',
-        'import { defineProject } from "@charet/sdk";\nimport { title } from "charet-only";',
-      )
+      .replace('from "@charet/sdk";', 'from "@charet/sdk";\nimport { title } from "charet-only";')
       .replace('title: "Tasks",', "title,"),
   };
   const lock = mkdtempSync(join(tmpdir(), "charet-lock-"));

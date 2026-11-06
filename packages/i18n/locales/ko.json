@@ -105,7 +105,7 @@
   "web.flows.step": "{total}단계 중 {n}",
   "web.flows.prev": "이전",
   "web.flows.next": "다음",
-  "web.components.empty": "아직 story 없음. .charet/project.tsx 에 추가.",
+  "web.components.empty": "story 가 없음. .charet/project.tsx 에 추가하거나 variants() 로 한 번에 생성.",
   "web.versions.handoff": "반영됨 · {commit}",
   "web.versions.handoffBy": "{name} 표시, {when}",
   "web.versions.inRepo": "product repo 에 반영됨",
@@ -553,5 +553,8 @@
   "web.providers.codeFor": "{provider} 로그인 code",
   "web.providers.submitCode": "로그인 완료",
   "web.providers.reopen": "Page 다시 열기",
-  "web.providers.tryAgain": "다시 로그인"
+  "web.providers.tryAgain": "다시 로그인",
+  "web.components.openStory": "열기",
+  "web.components.states": "상태",
+  "web.components.title": "Component"
 }
