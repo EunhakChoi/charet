@@ -131,6 +131,8 @@ struct Instance {
     name: String,
     /// The file its root element is written in, when the element says.
     file: Option<String>,
+    /// The file the component was used in.
+    site: Option<String>,
     x: i64,
     y: i64,
     w: i64,
@@ -247,6 +249,7 @@ fn union(roots: &[Root]) -> Option<Instance> {
             .as_deref()
             .and_then(source_file)
             .map(str::to_owned),
+        site: source_file(&first.used).map(str::to_owned),
         x,
         y,
         w: right - x,
@@ -272,6 +275,7 @@ fn gather(shots: &[(Capture, Value)], files: &[String]) -> Vec<ComponentGroup> {
             let Instance {
                 name,
                 file,
+                site,
                 x,
                 y,
                 w,
@@ -292,6 +296,14 @@ fn gather(shots: &[(Capture, Value)], files: &[String]) -> Vec<ComponentGroup> {
             if file.as_deref().is_some_and(|f| f.starts_with(".charet/")) {
                 continue;
             }
+            // A root written where the component was used (`<Button asChild><a/></Button>`) is
+            // the caller's element, not the component's: the file is where the component is.
+            let file = match file {
+                Some(written) if site.as_deref() == Some(written.as_str()) => {
+                    definition_file(&name, files).or(Some(written))
+                }
+                other => other,
+            };
             found.entry((name, file)).or_default().push(Found {
                 screen: capture.target.clone(),
                 x,
@@ -790,6 +802,28 @@ mod tests {
         let boxes: Vec<_> = item.instances.iter().map(|i| (i.y, i.h)).collect();
         assert_eq!(item.uses, 2, "{item:?}");
         assert_eq!(boxes, [(10, 20), (100, 50)]);
+    }
+
+    #[test]
+    fn a_root_written_at_the_call_site_is_not_the_components_file() {
+        // `<Button asChild><a/></Button>` on a page: the element is the page's.
+        let mut slotted = root(
+            &["Button"],
+            Some("src/pages/Home.tsx:9:3"),
+            [10, 10, 80, 30],
+            "Go",
+        );
+        slotted["use"] = json!("src/pages/Home.tsx:9:3");
+        let files = ["src/components/ui/button.tsx".to_owned()];
+        let groups = gather(&[(capture("home"), json!([slotted]))], &files);
+        assert_eq!(groups.len(), 1, "{groups:?}");
+        assert_eq!(groups[0].file, "src/components/ui/button.tsx");
+
+        // A component used in the file that defines it keeps that file.
+        let mut inner = root(&["Row"], Some("src/Home.tsx:20:3"), [10, 10, 80, 30], "");
+        inner["use"] = json!("src/Home.tsx:50:7");
+        let groups = gather(&[(capture("home"), json!([inner]))], &files);
+        assert_eq!(groups[0].file, "src/Home.tsx");
     }
 
     #[test]
