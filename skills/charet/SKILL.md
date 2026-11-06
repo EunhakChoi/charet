@@ -168,7 +168,9 @@ the drift to an admin instead of fixing it.
 
 **Repo ahead of charet** (someone changed the UI in the product repo). Run the import steps only
 when `charet handoff` reports drift; with none, the import is refused ("nothing new since the last
-import or handoff") and charet is already current, so go on with your work:
+import or handoff") and charet is already current, so go on with your work. Uncommitted edits count
+as drift, but the import records the repo's `HEAD` as its baseline: commit them on a work branch
+first, or `charet handoff` keeps reporting them and the next import is refused:
 
 ```bash
 cd <product repo>
@@ -183,7 +185,9 @@ wrong app. On main, `charet pull`. On a branch, `charet pull` fetches the branch
 `charet branch catch-up` first (`charet status` says which one you are on). If catch-up names clashing
 files, the branch did not move: settle them as in Workflow 3 ("Merge refused with a clash":
 `charet pull`, settle, push, `charet branch catch-up` again, `charet pull`) or start from a clean
-main checkout, before verifying. Do not continue on the old branch head. Then fix what the new code broke in `.charet/` (screens, mocks, stories),
+main checkout, before verifying. Do not continue on the old branch head.
+
+Then fix what the new code broke in `.charet/` (screens, mocks, stories),
 then verify as in Workflow 3: look at branch pictures with `--out`, merge, and capture from main so
 the team sees the real UI (a push moves the checkout onto a branch, and a bare capture there does
 not show the fix). When both sides changed the same file, do not choose
