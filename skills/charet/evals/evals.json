@@ -54,6 +54,12 @@
       "prompt": "{E}/dirty-{v} 에 수정해둔 거 charet 에 올려줘.",
       "expected_output": "The checkout has a local edit and main moved: sets the edit aside, pulls, re-applies, pushes; the teammate's version is kept.",
       "files": []
+    },
+    {
+      "id": 10,
+      "prompt": "{dir} 의 charet 프로젝트에서 Components 화면에 Button 이랑 TaskRow 를 보여줘. Button 은 variant·size 별로 골라서 볼 수 있게, TaskRow 는 따로 분리해서 기본값이 들어 있게 해줘.",
+      "expected_output": "Writes stories in .charet/project.tsx: Button with variants() over its variant and size props (render with example text, code snippet), and TaskRow with variants() or plain stories in group \"Feature\" whose default is a representative sample task (not empty props). Does not use one hand-written story per combination, imports nothing that reaches the API client at the top of project.tsx without lazy loading, pushes, runs check, and reports the Components view link. Calls stories component states, not flows.",
+      "files": []
     }
   ]
 }
