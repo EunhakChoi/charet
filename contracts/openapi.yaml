@@ -2501,22 +2501,15 @@ components:
               size:
                 $ref: "#/components/schemas/Size"
               props:
+                type: object
                 description: What this state sets, per prop (the Components view's prop picker)
-                oneOf:
-                  - type: array
-                    description: In the order the story declared them
-                    items:
-                      type: object
-                      required: [name, value]
-                      properties:
-                        name:
-                          type: string
-                        value:
-                          type: string
-                  - type: object
-                    description: Builds made by the first SDK with props wrote an object (key order is not kept); they stay served as stored
-                    additionalProperties:
-                      type: string
+                additionalProperties:
+                  type: string
+              propOrder:
+                type: array
+                description: The props' names in the order the story declared them (object keys are not kept in order)
+                items:
+                  type: string
               code:
                 type: string
                 description: The code that makes this state, shown next to the preview

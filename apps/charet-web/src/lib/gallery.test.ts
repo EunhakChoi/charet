@@ -17,7 +17,7 @@ const story = (id: string, component: string, props?: Record<string, string>): S
   component,
   title: id,
   size,
-  ...(props ? { props: Object.entries(props).map(([name, value]) => ({ name, value })) } : {}),
+  ...(props ? { props, propOrder: Object.keys(props) } : {}),
 });
 
 // A matrix with a gap: there is no outline + lg.
@@ -84,11 +84,36 @@ test("plain stories stay listed next to a component's props", () => {
   assert.equal(pickProp(mixed, mixed[3] as Story, "variant", "outline").id, "b-o-sm");
 });
 
-test("a manifest from the first SDK with props (an object) still reads", () => {
-  const old = { id: "o", component: "Button", title: "o", size, props: { variant: "outline" } };
-  const stories = [old as unknown as Story, story("d", "Button", { variant: "default" })];
-  assert.deepEqual(propsOf(stories[0] as Story), [{ name: "variant", value: "outline" }]);
-  assert.deepEqual(propChoices(stories), [{ name: "variant", values: ["outline", "default"] }]);
+test("props come in the declared order, even when the server sorted the keys", () => {
+  // JSON through the server: keys sorted, `propOrder` as the SDK wrote it.
+  const sorted: Story = {
+    ...story("s", "Button"),
+    props: { disabled: "false", size: "sm", variant: "default" },
+    propOrder: ["variant", "size", "disabled"],
+  };
+  assert.deepEqual(
+    propsOf(sorted).map((p) => p.name),
+    ["variant", "size", "disabled"],
+  );
+  assert.deepEqual(
+    propChoices([sorted]).map((p) => p.name),
+    ["variant", "size", "disabled"],
+  );
+});
+
+test("a manifest without propOrder (an older SDK) still reads, in the object's order", () => {
+  const old: Story = { ...story("o", "Button"), props: { variant: "outline", size: "lg" } };
+  assert.deepEqual(propsOf(old), [
+    { name: "variant", value: "outline" },
+    { name: "size", value: "lg" },
+  ]);
+  const stories = [old, story("d", "Button", { variant: "default", size: "lg" })];
   assert.equal(pickProp(stories, stories[1] as Story, "variant", "outline").id, "o");
   assert.deepEqual(plainStories(stories), []);
+  // A name in propOrder with no value, or a prop missing from propOrder, does not break it.
+  const odd: Story = { ...story("x", "Button"), props: { a: "1", b: "2" }, propOrder: ["z", "b"] };
+  assert.deepEqual(
+    propsOf(odd).map((p) => p.name),
+    ["b", "a"],
+  );
 });

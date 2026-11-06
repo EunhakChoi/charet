@@ -1505,11 +1505,10 @@ export interface components {
                 size: components["schemas"]["Size"];
                 /** @description What this state sets, per prop (the Components view's prop picker) */
                 props?: {
-                    name: string;
-                    value: string;
-                }[] | {
                     [key: string]: string;
                 };
+                /** @description The props' names in the order the story declared them (object keys are not kept in order) */
+                propOrder?: string[];
                 /** @description The code that makes this state, shown next to the preview */
                 code?: string;
             }[];

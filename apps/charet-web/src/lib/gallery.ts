@@ -23,16 +23,17 @@ export function byComponent(stories: Story[]): ComponentStories[] {
 }
 
 /**
- * What a story sets, in order. A project built with the first SDK that had `props` wrote an
- * object (`{ variant: "outline" }`, key order unreliable), later ones an array; builds stay in
- * history and in use, so both are read.
+ * What a story sets, in the order it declared them: `propOrder` carries the order (the server
+ * sorts object keys); builds from before it existed have none, and keep the object's own order.
  */
 export function propsOf(story: Story): { name: string; value: string }[] {
-  const props: unknown = story.props;
-  if (Array.isArray(props)) return props as { name: string; value: string }[];
-  if (props && typeof props === "object")
-    return Object.entries(props).map(([name, value]) => ({ name, value: String(value) }));
-  return [];
+  const props = story.props ?? {};
+  const order = story.propOrder ?? [];
+  const names = [
+    ...order.filter((name) => name in props),
+    ...Object.keys(props).filter((name) => !order.includes(name)),
+  ];
+  return names.map((name) => ({ name, value: String(props[name]) }));
 }
 
 /** What `story` sets `name` to, when it sets it. */
