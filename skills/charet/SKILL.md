@@ -175,9 +175,10 @@ charet import --update -p <project> --dry-run  # what would come in; a file both
 charet import --update -p <project>            # brings the repo's files in as an import version
 ```
 
-The import advances main on the server only. Go back to the charet checkout and `charet pull`
-before editing: a checkout made earlier still holds the old UI, and a branch started from it
-verifies the wrong app. Then fix what the new code broke in `.charet/` (screens, mocks, stories),
+The import advances main on the server only. Go back to the charet checkout and refresh it before
+editing: a checkout made earlier still holds the old UI, and work started from it verifies the
+wrong app. On main, `charet pull`. On a branch, `charet pull` fetches the branch's own head, so run
+`charet branch catch-up` first (`charet status` says which one you are on). Then fix what the new code broke in `.charet/` (screens, mocks, stories),
 push, `charet check`, and capture again so the team sees the real UI. When both sides changed the same file, do not choose
 silently: show the user both changes and ask which one wins.
 
