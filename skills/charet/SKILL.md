@@ -166,9 +166,12 @@ other. Check before changing UI through charet (Workflows 1 and 2), and before e
 directly. Importing and handing off are admin actions; a non-admin reports
 the drift to an admin instead of fixing it.
 
-**Repo ahead of charet** (someone changed the UI in the product repo). Run the import steps only
-when `charet handoff` reports drift; with none, the import is refused ("nothing new since the last
-import or handoff") and charet is already current, so go on with your work. Uncommitted edits count
+**Repo ahead of charet** (someone changed the UI in the product repo). Run the import steps when
+`charet handoff` reports drift. When it reports none, the import would be refused ("nothing new
+since the last import or handoff") and charet is current, so go on with your work. When it reports
+drift as `unknown` (no repo commit recorded at the baseline, or that commit is not in this clone),
+resolve that first: fetch the repo so the commit exists, or run `charet import --update` once to
+record a baseline, then check again. Uncommitted edits count
 as drift, but the import records the repo's `HEAD` as its baseline: commit them on a work branch
 first, or `charet handoff` keeps reporting them and the next import is refused:
 
