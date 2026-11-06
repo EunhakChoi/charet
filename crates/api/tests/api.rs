@@ -159,7 +159,10 @@ impl Renderer for FakeRenderer {
             image: job.image.map(|_| b"\xff\xd8jpeg".to_vec()),
             elements: job
                 .map
-                .then(|| json!([{ "x": 0, "y": 0, "w": 10, "h": 10, "chain": ["Home"], "sel": "body", "tag": "main", "text": "", "src": "src/home.tsx:1:1" }])),
+                .then(|| json!([
+                    { "x": 0, "y": 0, "w": 10, "h": 10, "chain": ["Home"], "sel": "body", "tag": "main", "text": "", "src": "src/home.tsx:1:1" },
+                    { "x": 20, "y": 30, "w": 40, "h": 12, "chain": ["Home", "Badge"], "sel": "body > span", "tag": "span", "text": "New", "src": "src/badge.tsx:2:3", "use": "src/home.tsx:4:5" },
+                ])),
         })
     }
 }
@@ -623,7 +626,10 @@ async fn check_capture_and_read_back() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(list["captures"][0]["target"], "home");
     assert_eq!(list["captures"][0]["stale"], false);
-    assert_eq!(list["captures"][0]["sources"], json!(["src/home.tsx"]));
+    assert_eq!(
+        list["captures"][0]["sources"],
+        json!(["src/badge.tsx", "src/home.tsx"])
+    );
 
     let (status, image, _) = send(
         engine.clone(),
@@ -655,6 +661,33 @@ async fn check_capture_and_read_back() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+}
+
+#[tokio::test]
+async fn components_are_read_from_the_captures_of_a_theme() {
+    let engine = engine(true).with_preview(preview_settings());
+    post(engine.clone(), "/api/projects", &json!({ "key": "web" })).await;
+    let (status, none) = call(engine.clone(), "/api/projects/web/components").await;
+    assert_eq!(status, StatusCode::OK, "{none}");
+    assert_eq!(none["components"], json!([]), "nothing captured yet");
+
+    post(engine.clone(), "/api/projects/web/captures", &json!({})).await;
+    let (status, light) = call(engine.clone(), "/api/projects/web/components").await;
+    assert_eq!(status, StatusCode::OK, "{light}");
+    assert_eq!(
+        light["components"],
+        json!([{
+            "name": "Badge",
+            "file": "src/badge.tsx",
+            "uses": 1,
+            "instances": [{ "screen": "home", "x": 20, "y": 30, "w": 40, "h": 12, "text": "New" }],
+        }]),
+        "light is the default theme; the page-sized `Home` is not a component"
+    );
+    let (_, dark) = call(engine.clone(), "/api/projects/web/components?theme=dark").await;
+    assert_eq!(dark["components"], json!([]), "only light was captured");
+    let (status, _) = call(engine, "/api/projects/web/components?theme=sepia").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

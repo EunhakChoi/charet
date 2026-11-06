@@ -1551,6 +1551,41 @@ paths:
                   $ref: "#/components/schemas/Element"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/projects/{key}/components:
+    parameters:
+      - $ref: "#/components/parameters/ProjectKey"
+    get:
+      tags: [captures]
+      operationId: listComponents
+      summary: The components the project's screens use, read from their captures
+      description: >
+        Each component the screens use, with where it is defined, how often it is used and a few
+        varied uses (a box on a screen's capture, to cut a picture out of it). Icons, library
+        components and anything that fills most of a screen are left out.
+      parameters:
+        - name: theme
+          in: query
+          schema:
+            type: string
+            enum: [light, dark]
+            default: light
+      responses:
+        "200":
+          description: Components, by the folder of their file, then by name
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [components]
+                properties:
+                  components:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ComponentGroup"
+        "400":
+          $ref: "#/components/responses/Invalid"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/projects/{key}/comments:
     parameters:
       - $ref: "#/components/parameters/ProjectKey"
@@ -2657,6 +2692,40 @@ components:
           description: A check with `image`. The picture's element map
           items:
             $ref: "#/components/schemas/Element"
+    ComponentGroup:
+      type: object
+      required: [name, file, uses, instances]
+      properties:
+        name:
+          type: string
+        file:
+          type: string
+          description: Where it is defined, relative to the app
+        uses:
+          type: integer
+          description: Every use found in the screens' captures of the theme
+        instances:
+          type: array
+          description: A few uses that differ in size and text, spread over the screens
+          items:
+            $ref: "#/components/schemas/ComponentUse"
+    ComponentUse:
+      type: object
+      required: [screen, x, y, w, h]
+      properties:
+        screen:
+          type: string
+          description: The screen whose capture shows it
+        x:
+          type: integer
+        y:
+          type: integer
+        w:
+          type: integer
+        h:
+          type: integer
+        text:
+          type: string
     Capture:
       type: object
       required: [kind, target, theme, commit, width, height, issues, sources, capturedAt, stale]

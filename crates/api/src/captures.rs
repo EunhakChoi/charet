@@ -5,7 +5,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
-use charet_engine::{CaptureStatus, Engine, EngineError, Rendered, SheetItem};
+use charet_engine::{CaptureStatus, ComponentGroup, Engine, EngineError, Rendered, SheetItem};
 use serde::{Deserialize, Serialize};
 
 use crate::projects::blocking;
@@ -107,6 +107,29 @@ pub async fn elements(
     let map =
         blocking(move || engine.capture_elements(&actor, &key, &kind, &target, &theme)).await?;
     Ok(Json(map))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ComponentsQuery {
+    /// `light` (default) or `dark`.
+    theme: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ComponentList {
+    components: Vec<ComponentGroup>,
+}
+
+pub async fn components(
+    State(engine): State<Engine>,
+    Caller(actor): Caller,
+    Path(key): Path<String>,
+    Query(query): Query<ComponentsQuery>,
+) -> Result<Json<ComponentList>, ApiError> {
+    let theme = query.theme.unwrap_or_else(|| "light".into());
+    let components = blocking(move || engine.components(&actor, &key, &theme)).await?;
+    Ok(Json(ComponentList { components }))
 }
 
 #[derive(Deserialize)]

@@ -147,12 +147,18 @@ export function RealtimeProvider({ project, children }: { project: string; child
           ["branches", project],
           ["manifest", project],
           ["captures", project],
+          ["components", project],
           ["preview", project],
           ["files", project],
           ["file", project],
         );
       if (kind === "capture.updated")
-        keys.push(["captures", project], ["elements", project], ["comments", project]);
+        keys.push(
+          ["captures", project],
+          ["components", project],
+          ["elements", project],
+          ["comments", project],
+        );
       if (kind === "project.updated") keys.push(["project", project], ["projects"], ["me"]);
       if (kind === "agent.updated")
         keys.push(["agent-runs", project], ["agent-messages", project], ["branches", project]);

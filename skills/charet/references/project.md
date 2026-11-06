@@ -72,8 +72,10 @@ Rules (checked when the project loads):
 - `setup(kit)`: `kit.click(selector, text?)`, `kit.fill(selector, value)`, `kit.find(selector, text?)`,
   `kit.wait(ms)`. Selectors are CSS, searched in the whole document (dialogs in portals too); text
   matches the trimmed text or the `aria-label`.
-- Stories are grouped by `component` in the Components view. A story's `mocks` start MSW like a
-  screen's.
+- The Components view lists the components the screens use, found in their captures (a component
+  needs a file in the project; capture the screens to fill it), each with a few pictures cut out of
+  the captures. Stories are listed under their `component` there too, and a component with a story
+  but no use on a screen still shows. A story's `mocks` start MSW like a screen's.
 
 ## Imported apps
 

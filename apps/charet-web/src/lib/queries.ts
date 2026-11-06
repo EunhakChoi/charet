@@ -80,6 +80,19 @@ export function useCaptures(key: string) {
   });
 }
 
+/** The components the project's screens use, read from their captures in `theme`. */
+export function useComponents(key: string, theme: Theme) {
+  return useQuery({
+    queryKey: ["components", key, theme],
+    queryFn: () =>
+      unwrap(
+        api.GET("/api/projects/{key}/components", {
+          params: { path: { key }, query: { theme } },
+        }),
+      ),
+  });
+}
+
 export function useElements(
   key: string,
   kind: TargetKind,
@@ -161,6 +174,7 @@ export function useCapture(key: string) {
       unwrap(api.POST("/api/projects/{key}/captures", { ...path(key), body: input })),
     onSettled: () => {
       void client.invalidateQueries({ queryKey: ["captures", key] });
+      void client.invalidateQueries({ queryKey: ["components", key] });
       void client.invalidateQueries({ queryKey: ["elements", key] });
       void client.invalidateQueries({ queryKey: ["comments", key] });
     },

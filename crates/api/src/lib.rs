@@ -106,6 +106,7 @@ pub const ROUTES: &[(&str, &str)] = &[
         "get",
         "/api/projects/{key}/captures/{kind}/{target}/{theme}/elements",
     ),
+    ("get", "/api/projects/{key}/components"),
     ("get", "/api/projects/{key}/sheet"),
     ("get", "/api/projects/{key}/comments"),
     ("post", "/api/projects/{key}/comments"),
@@ -249,6 +250,7 @@ fn routes() -> Router<Engine> {
             "/api/projects/{key}/captures/{kind}/{target}/{theme}/elements",
             get(captures::elements),
         )
+        .route("/api/projects/{key}/components", get(captures::components))
         .route(
             "/api/projects/{key}/comments",
             get(comments::list).post(comments::add),

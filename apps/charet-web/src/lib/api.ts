@@ -5,6 +5,8 @@ export const api = createClient();
 
 export type Manifest = Schemas["Manifest"];
 export type Capture = Schemas["Capture"];
+export type ComponentGroup = Schemas["ComponentGroup"];
+export type ComponentUse = Schemas["ComponentUse"];
 export type Comment = Schemas["Comment"];
 export type Anchor = Schemas["Anchor"];
 export type Element = Schemas["Element"];

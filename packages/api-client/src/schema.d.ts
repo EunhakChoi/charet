@@ -995,6 +995,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{key}/components": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        /**
+         * The components the project's screens use, read from their captures
+         * @description Each component the screens use, with where it is defined, how often it is used and a few varied uses (a box on a screen's capture, to cut a picture out of it). Icons, library components and anything that fills most of a screen are left out.
+         */
+        get: operations["listComponents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{key}/comments": {
         parameters: {
             query?: never;
@@ -1585,6 +1607,24 @@ export interface components {
             image?: string;
             /** @description A check with `image`. The picture's element map */
             elements?: components["schemas"]["Element"][];
+        };
+        ComponentGroup: {
+            name: string;
+            /** @description Where it is defined, relative to the app */
+            file: string;
+            /** @description Every use found in the screens' captures of the theme */
+            uses: number;
+            /** @description A few uses that differ in size and text, spread over the screens */
+            instances: components["schemas"]["ComponentUse"][];
+        };
+        ComponentUse: {
+            /** @description The screen whose capture shows it */
+            screen: string;
+            x: number;
+            y: number;
+            w: number;
+            h: number;
+            text?: string;
         };
         Capture: {
             /** @enum {string} */
@@ -3941,6 +3981,34 @@ export interface operations {
                     "application/json": components["schemas"]["Element"][];
                 };
             };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listComponents: {
+        parameters: {
+            query?: {
+                theme?: "light" | "dark";
+            };
+            header?: never;
+            path: {
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Components, by the folder of their file, then by name */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        components: components["schemas"]["ComponentGroup"][];
+                    };
+                };
+            };
+            400: components["responses"]["Invalid"];
             404: components["responses"]["NotFound"];
         };
     };
