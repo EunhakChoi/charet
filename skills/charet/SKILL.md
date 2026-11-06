@@ -1,6 +1,6 @@
 ---
 name: charet
-description: Work with charet, a code-first design board where an app's real React UI is rendered with mock APIs as screens, flows and component stories that a team reviews and comments on. Use this skill whenever the user mentions charet or a charet project, design or UI review comments to handle, screens, flows or stories, a `.charet/` folder or a charet checkout, putting an app on charet (import), or wants a UI change checked, captured or shown to the team — even if they only say "check the screen", "the designer left comments" or "make this reviewable".
+description: Work with charet, a code-first design board where an app's real React UI is rendered with mock APIs as screens, flows and component stories that a team reviews and comments on. Use this skill whenever the user mentions charet or a charet project, design or UI review comments to handle, screens, flows or stories, a `.charet/` folder or a charet checkout, putting an app on charet (import), or wants a UI change checked, captured or shown to the team — even if they only say "check the screen", "the designer left comments" or "make this reviewable". Also use it when the product repo was edited outside charet and charet may be out of date ("I changed the UI in the repo directly", "charet looks old", repo drift, `charet import --update`), and before editing the repo directly while charet holds versions not handed off yet.
 ---
 
 # charet
@@ -54,6 +54,8 @@ charet ls                # screens, stories, flows and whether their captures ar
 
 ## Workflow 1 · Handle comments
 
+0. Recommended: check charet matches the product repo first (Workflow 4c). A comment about a screen
+   that is out of date is about the wrong UI.
 1. `charet comments`, then `charet comments show c12`. It saves the snapshot the comment was made
    on and prints its path, the pinned element, its component chain (outermost › innermost) and
    the source location.
@@ -74,6 +76,8 @@ act on the latest content.
 
 A flow written before the code is the plan the team can review; planned steps are your to-do list.
 
+0. Recommended: check charet matches the product repo first (Workflow 4c), so you build on the UI
+   people actually run.
 1. In `.charet/project.tsx`, add or extend a flow. Steps that do not exist yet are planned:
    `{ id: "export-dialog", title: "Export dialog", note: "CSV, date range" }`.
 2. Build the UI in the app.
@@ -154,6 +158,33 @@ flow. Write them in `.charet/project.tsx`:
 - A component that reaches the app's API client when it loads is imported lazily inside the story.
 
 `references/project.md` has the rules and examples. Then push and check like any other change.
+
+## Workflow 4c · The product repo and charet disagree
+
+charet keeps its own copy of the app, so the two drift apart when someone edits one without the
+other. Check before changing UI through charet (Workflows 1 and 2), and before editing the repo
+directly. Importing and handing off are admin actions; a non-admin reports
+the drift to an admin instead of fixing it.
+
+**Repo ahead of charet** (someone changed the UI in the product repo):
+
+```bash
+cd <product repo>
+charet handoff -p <project>                    # lists the repo's commits and uncommitted edits to imported files
+charet import --update -p <project> --dry-run  # what would come in; a file both sides changed is refused
+charet import --update -p <project>            # brings the repo's files in as an import version
+```
+
+Then fix what the new code broke in `.charet/` (screens, mocks, stories), `charet check`, and
+capture again so the team sees the real UI. When both sides changed the same file, do not choose
+silently: show the user both changes and ask which one wins.
+
+**charet ahead of the repo** (merged versions not in the repo yet): `charet handoff` lists them.
+Export them (Workflow 5) before editing the repo directly, or the next import-and-export pair
+fights over the same lines.
+
+If you cannot reach the repo or the server, say you could not check and which side you did not
+see. Do not call charet "up to date" because nothing was compared.
 
 ## Workflow 5 · Hand changes to the product repo (admins)
 
