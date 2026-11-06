@@ -90,6 +90,11 @@ Rules (checked when the project loads):
   live in the story: `render` supplies a representative sample (a typical record, a signed-in user)
   and `mocks` what it fetches, and only the props that change what it shows become `props`. Do not
   leave the sample empty: a feature component shown with `undefined` props is an empty box.
+- A component that reaches the app's API client when it loads (through a query hook, `@/lib/api`)
+  must not be imported at the top of `project.tsx` or a story file: the client would be made before
+  the mocks start and keep the real `fetch`, and every screen reports "unmocked request reached the
+  network". Load it when the story shows it: `const Avatar = lazy(() => import("@/components/Avatars").then((m) => ({ default: m.Avatar })))`
+  and render it inside `<Suspense>`. Plain UI components (no client) import normally.
 
 ## Imported apps
 
