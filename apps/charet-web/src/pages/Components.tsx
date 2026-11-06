@@ -5,7 +5,7 @@ import { copyText } from "@/components/CopyOnce";
 import { Live } from "@/components/Live";
 import { Button } from "@/components/ui/button";
 import type { Manifest } from "@/lib/api";
-import { byComponent, firstStory, pickProp, propChoices } from "@/lib/gallery";
+import { byComponent, firstStory, pickProp, plainStories, propChoices } from "@/lib/gallery";
 import { useT } from "@/lib/i18n";
 import { useProjectContext } from "@/lib/project";
 import { useScreenTheme } from "@/lib/theme";
@@ -80,6 +80,7 @@ function Gallery({ name, stories }: { name: string; stories: Story[] }) {
   const story = stories.find((s) => s.id === picked) ?? firstStory(stories);
   if (!story) return null;
   const props = propChoices(stories);
+  const plain = plainStories(stories);
   return (
     <article
       id={`component-${name}`}
@@ -100,30 +101,29 @@ function Gallery({ name, stories }: { name: string; stories: Story[] }) {
           </Link>
         </div>
         <div>
-          {props.length > 0 ? (
-            props.map((prop) => (
-              <Chips
-                key={prop.name}
-                label={prop.name}
-                testId={`prop-${name}-${prop.name}`}
-                options={prop.values.map((value) => ({
-                  value,
-                  picked: story.props?.[prop.name] === value,
-                  onPick: () => setPicked(pickProp(stories, story, prop.name, value).id),
-                }))}
-              />
-            ))
-          ) : stories.length > 1 ? (
+          {props.map((prop) => (
+            <Chips
+              key={prop.name}
+              label={prop.name}
+              testId={`prop-${name}-${prop.name}`}
+              options={prop.values.map((value) => ({
+                value,
+                picked: story.props?.[prop.name] === value,
+                onPick: () => setPicked(pickProp(stories, story, prop.name, value).id),
+              }))}
+            />
+          ))}
+          {plain.length > 0 && (props.length > 0 || plain.length > 1) && (
             <Chips
               label={t("web.components.states")}
               testId={`state-${name}`}
-              options={stories.map((s) => ({
+              options={plain.map((s) => ({
                 value: s.title,
                 picked: s.id === story.id,
                 onPick: () => setPicked(s.id),
               }))}
             />
-          ) : null}
+          )}
         </div>
         {story.code && <CodeBlock code={story.code} />}
       </div>

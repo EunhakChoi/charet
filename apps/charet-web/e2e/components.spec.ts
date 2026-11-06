@@ -27,6 +27,16 @@ test("a component's state is picked by its props and shown live", async ({ page 
   const frame = button.frameLocator('iframe[title="button-variant-outline-size-lg"]');
   await expect(frame.getByRole("button", { name: "Save" })).toBeVisible({ timeout: 30_000 });
 
-  await button.getByTestId("story-button-variant-outline-size-lg").click();
-  await expect(page).toHaveURL(/\/p\/demo\/t\/story\/button-variant-outline-size-lg$/);
+  // A state that sets no props stays reachable beside the picker, and so do the props again.
+  await button.getByTestId("state-Button-Loading").click();
+  await expect(code).toHaveCount(0);
+  await expect(
+    button.frameLocator('iframe[title="button-loading"]').getByRole("button", { name: "Saving…" }),
+  ).toBeVisible({ timeout: 30_000 });
+  await button.getByTestId("prop-Button-variant-outline").click();
+  // From a state with no props nothing is kept, so the first story with that value shows.
+  await expect(code).toHaveText('<Button variant="outline" size="sm">Save</Button>');
+
+  await button.getByTestId("story-button-variant-outline-size-sm").click();
+  await expect(page).toHaveURL(/\/p\/demo\/t\/story\/button-variant-outline-size-sm$/);
 });

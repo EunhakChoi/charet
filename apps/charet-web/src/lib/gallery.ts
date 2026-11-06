@@ -68,3 +68,8 @@ export function firstStory(stories: Story[]): Story | undefined {
     ) ?? stories[0]
   );
 }
+
+/** The stories that set no props: states picked by their title, next to the prop picker. */
+export function plainStories(stories: Story[]): Story[] {
+  return stories.filter((story) => Object.keys(story.props ?? {}).length === 0);
+}

@@ -36,14 +36,23 @@ export default defineProject({
     },
   ],
   // One story per combination: the Components view gets a picker for each prop.
-  stories: variants({
-    component: "Button",
-    props: { variant: ["default", "secondary", "outline"], size: ["sm", "default", "lg"] },
-    render: (p) => (
-      <Button variant={p.variant as "default"} size={p.size as "default"}>
-        Save
-      </Button>
-    ),
-    code: (p) => `<Button variant="${p.variant}" size="${p.size}">Save</Button>`,
-  }),
+  stories: [
+    ...variants({
+      component: "Button",
+      props: { variant: ["default", "secondary", "outline"], size: ["sm", "default", "lg"] },
+      render: (p) => (
+        <Button variant={p.variant as "default"} size={p.size as "default"}>
+          Save
+        </Button>
+      ),
+      code: (p) => `<Button variant="${p.variant}" size="${p.size}">Save</Button>`,
+    }),
+    // A state that is not a combination of props is an ordinary story, listed beside the picker.
+    {
+      id: "button-loading",
+      component: "Button",
+      title: "Loading",
+      render: () => <Button disabled>Saving…</Button>,
+    },
+  ],
 });

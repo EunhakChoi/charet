@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Manifest } from "./api";
-import { byComponent, firstStory, pickProp, propChoices } from "./gallery.ts";
+import { byComponent, firstStory, pickProp, plainStories, propChoices } from "./gallery.ts";
 
 type Story = Manifest["stories"][number];
 const size = { w: 480, h: 320 };
@@ -64,4 +64,15 @@ test("the first story is the one built from default values", () => {
   ];
   assert.equal(firstStory(shifted)?.id, "x2");
   assert.equal(firstStory([story("p", "Card"), story("q", "Card")])?.id, "p");
+});
+
+test("plain stories stay listed next to a component's props", () => {
+  const mixed = [...button, story("b-loading", "Button")];
+  assert.deepEqual(
+    plainStories(mixed).map((s) => s.id),
+    ["b-loading"],
+  );
+  assert.deepEqual(plainStories(button), []);
+  // Picking a prop from the plain state lands on a story that sets it.
+  assert.equal(pickProp(mixed, mixed[3] as Story, "variant", "outline").id, "b-o-sm");
 });
