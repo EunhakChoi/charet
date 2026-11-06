@@ -189,36 +189,48 @@ fn roots(map: &Value) -> Vec<Root> {
 /// The component instances of an element map.
 ///
 /// A component that returns several elements (a fragment) has a row for each, all at the place it
-/// was used but on different lines of its file; the items of a list are rows at the same place and
-/// on the same line. So the n-th row of each line is one instance, and its box holds them all.
-/// A row that says nothing about its line is an instance of its own.
+/// was used. The rows are in document order, and a component writes its elements in the order of
+/// its file, so the roots of one instance come with the position in the file going up; a row
+/// whose position is not after the one before it begins the next instance (the items of a list
+/// repeat one position). A row that says nothing about its position is an instance of its own.
 fn instances(map: &Value) -> Vec<Instance> {
-    let mut grouped: Vec<Vec<Root>> = Vec::new();
     // By component, place and file: two components of one name are told apart by their files.
-    let mut sites: BTreeMap<(String, String, String), BTreeMap<String, Vec<Root>>> =
-        BTreeMap::new();
+    let mut sites: BTreeMap<(String, String, String), Vec<Root>> = BTreeMap::new();
+    let mut grouped: Vec<Vec<Root>> = Vec::new();
     for root in roots(map) {
-        match root.src.clone() {
-            Some(line) => {
-                let file = source_file(&line).unwrap_or_default().to_owned();
-                sites
-                    .entry((root.name.clone(), root.used.clone(), file))
-                    .or_default()
-                    .entry(line)
-                    .or_default()
-                    .push(root);
-            }
+        match root.src.as_deref().and_then(source_position) {
+            Some((file, _)) => sites
+                .entry((root.name.clone(), root.used.clone(), file.to_owned()))
+                .or_default()
+                .push(root),
             None => grouped.push(vec![root]),
         }
     }
-    for by_line in sites.into_values() {
-        let count = by_line.values().map(Vec::len).max().unwrap_or_default();
-        let mut lines: Vec<_> = by_line.into_values().map(Vec::into_iter).collect();
-        for _ in 0..count {
-            grouped.push(lines.iter_mut().filter_map(Iterator::next).collect());
+    for rows in sites.into_values() {
+        let mut instance: Vec<Root> = Vec::new();
+        let mut last = None;
+        for row in rows {
+            let at = row
+                .src
+                .as_deref()
+                .and_then(source_position)
+                .map(|(_, at)| at);
+            if !instance.is_empty() && at <= last {
+                grouped.push(std::mem::take(&mut instance));
+            }
+            last = at;
+            instance.push(row);
         }
+        grouped.push(instance);
     }
     grouped.iter().filter_map(|roots| union(roots)).collect()
+}
+
+/// The file and the (line, column) of a `path:line:col` source location.
+fn source_position(src: &str) -> Option<(&str, (u32, u32))> {
+    let (rest, col) = src.rsplit_once(':')?;
+    let (file, line) = rest.rsplit_once(':')?;
+    Some((file, (line.parse().ok()?, col.parse().ok()?)))
 }
 
 /// The roots of one instance as a single box.
@@ -714,23 +726,70 @@ mod tests {
     #[test]
     fn the_items_of_a_list_are_a_use_each_even_when_each_is_a_fragment() {
         let site = "src/Home.tsx:4:5";
-        let rows = |line: &str, top: i64| -> Vec<Value> {
+        let row = |line: &str, top: i64| root_used(site, &["Row"], line, [10, top, 100, 20], "");
+        // Document order: both roots of the first item, then both of the second, and so on.
+        let home = json!(
             (0..3)
-                .map(|i| root_used(site, &["Row"], line, [10, top + i * 100, 100, 20], ""))
-                .collect()
-        };
-        let both = [rows("src/Row.tsx:3:3", 10), rows("src/Row.tsx:9:3", 40)].concat();
-        let home = json!(both);
+                .flat_map(|i| [
+                    row("src/Row.tsx:3:3", 10 + i * 100),
+                    row("src/Row.tsx:9:3", 40 + i * 100)
+                ])
+                .collect::<Vec<_>>()
+        );
         let groups = gather(&[(capture("home"), home)], &[]);
         let row = group(&groups, "Row");
         assert_eq!(row.uses, 3, "three items, two roots each");
         assert!(row.instances.iter().all(|i| i.h == 50), "{row:?}");
 
-        let plain = json!(rows("src/Row.tsx:3:3", 10));
+        let plain = json!(
+            (0..3)
+                .map(|i| root_used(
+                    site,
+                    &["Row"],
+                    "src/Row.tsx:3:3",
+                    [10, 10 + i * 100, 100, 20],
+                    ""
+                ))
+                .collect::<Vec<_>>()
+        );
         assert_eq!(
             group(&gather(&[(capture("home"), plain)], &[]), "Row").uses,
             3
         );
+    }
+
+    #[test]
+    fn a_conditional_root_does_not_pull_in_the_next_instance() {
+        // The first item renders only its second root; the second item renders both.
+        let site = "src/Home.tsx:4:5";
+        let home = json!([
+            root_used(
+                site,
+                &["Item"],
+                "src/Item.tsx:20:5",
+                [10, 10, 100, 20],
+                "b1"
+            ),
+            root_used(
+                site,
+                &["Item"],
+                "src/Item.tsx:10:5",
+                [10, 100, 100, 20],
+                "a2"
+            ),
+            root_used(
+                site,
+                &["Item"],
+                "src/Item.tsx:20:5",
+                [10, 130, 100, 20],
+                "b2"
+            ),
+        ]);
+        let groups = gather(&[(capture("home"), home)], &[]);
+        let item = group(&groups, "Item");
+        let boxes: Vec<_> = item.instances.iter().map(|i| (i.y, i.h)).collect();
+        assert_eq!(item.uses, 2, "{item:?}");
+        assert_eq!(boxes, [(10, 20), (100, 50)]);
     }
 
     #[test]
