@@ -140,9 +140,11 @@ covers getting the SDK, the files to write and the usual failures.
 
 ## Workflow 4b · Show components (the Components view)
 
-The web tool has three views of a project: **Screens** (a page in one state), **Flows** (the order
-of screens) and **Components** (parts, each shown bare with example text). A **story** is one state
-of a component, as in Storybook; it is not a flow. Write them in `.charet/project.tsx`:
+The web tool's tabs are Screens, Flows, Components, Branches, Versions and Code. Three of them show
+what a project declares: **Screens** (a page in one state), **Flows** (the order of screens) and
+**Components** (parts, each shown bare with example text); the others are about changes (Branches,
+Versions) and source (Code). A **story** is one state of a component, as in Storybook; it is not a
+flow. Write them in `.charet/project.tsx`:
 
 - Make every combination of a component's props with `variants({ component, props, render, code })`
   instead of one story per state. The view gets a prop picker, a live preview and the code to copy.
