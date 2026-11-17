@@ -642,9 +642,7 @@ impl Engine {
     }
 
     fn agent_config(&self) -> AgentConfig {
-        self.agents
-            .as_ref()
-            .map_or_default(|a| a.config.clone())
+        self.agents.as_ref().map_or_default(|a| a.config.clone())
     }
 
     fn provider_net(&self) -> Result<&Providers, EngineError> {
@@ -773,10 +771,7 @@ impl Engine {
                 })?;
             (email_of(&id_token).unwrap_or_default(), account_id)
         } else {
-            (
-                old.map_or_default(|o| o.account.clone()),
-                String::new(),
-            )
+            (old.map_or_default(|o| o.account.clone()), String::new())
         };
         // The one place that decides: a login always has a refresh token, a new one or the old one.
         let Some(refresh) = tokens
