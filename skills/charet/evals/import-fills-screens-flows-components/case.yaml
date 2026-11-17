@@ -2,7 +2,8 @@ schema_version: "1.1"
 name: import-fills-screens-flows-components
 expected_outcome: |
   After the import and the first rendered screen, the answer reads the app's routes, navigation and
-  components, then picks a few main pages with their usual, empty and error states (and states reached
+  where its components come from (following imports), then picks a few main pages with their usual, empty and error states (and states reached
   by interaction) as screens, writes one or two flows in the order the app really goes, and registers
   shared UI parts with variants() in the Base group and data-dependent components in a Feature group with
-  a sample default. It ends with check, capture and links, and says what it left out.
+  a sample default. It ends with check, captures that it
+  looks at itself, and links, and says what it left out.
