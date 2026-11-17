@@ -644,8 +644,7 @@ impl Engine {
     fn agent_config(&self) -> AgentConfig {
         self.agents
             .as_ref()
-            .map(|a| a.config.clone())
-            .unwrap_or_default()
+            .map_or_default(|a| a.config.clone())
     }
 
     fn provider_net(&self) -> Result<&Providers, EngineError> {
@@ -775,7 +774,7 @@ impl Engine {
             (email_of(&id_token).unwrap_or_default(), account_id)
         } else {
             (
-                old.map(|o| o.account.clone()).unwrap_or_default(),
+                old.map_or_default(|o| o.account.clone()),
                 String::new(),
             )
         };
