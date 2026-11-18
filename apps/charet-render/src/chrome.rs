@@ -530,7 +530,7 @@ fn report_unmocked(watch: &mut Watch) {
         if reported.contains(&key) || !seen.insert(key.clone()) {
             continue;
         }
-        let to = host.map(|h| format!(" to {h}")).unwrap_or_default();
+        let to = host.map_or_default(|h| format!(" to {h}"));
         let issue = format!(
             "[charet] unmocked request reached the network{to}: {key} (an API client made before \
              the mocks started keeps the real fetch; load the app inside renderScreen)"

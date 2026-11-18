@@ -768,7 +768,7 @@ impl ProjectStore for MemoryStore {
         if repo.lines.get(line).map(String::as_str) != parent {
             return Ok(None);
         }
-        let mut files = parent.map(|p| repo.files(p).clone()).unwrap_or_default();
+        let mut files = parent.map_or_default(|p| repo.files(p).clone());
         for change in changes {
             match &change.content {
                 Some(content) => files.insert(change.path.clone(), content.clone()),
@@ -828,8 +828,7 @@ impl ProjectStore for MemoryStore {
         }
         let base = repo
             .base(ours, theirs)
-            .map(|b| repo.files(&b).clone())
-            .unwrap_or_default();
+            .map_or_default(|b| repo.files(&b).clone());
         match Repo::join(&base, repo.files(ours), repo.files(theirs)) {
             Ok(files) => Ok(Merged::Clean(
                 repo.add(files, vec![ours.into(), theirs.into()]),
@@ -848,7 +847,7 @@ impl ProjectStore for MemoryStore {
         let mut repos = self.0.lock().unwrap();
         let repo = repos.get_mut(project).unwrap();
         let parent = repo.commits[commit].1.first().cloned();
-        let before = parent.map(|p| repo.files(&p).clone()).unwrap_or_default();
+        let before = parent.map_or_default(|p| repo.files(&p).clone());
         match Repo::join(repo.files(commit), repo.files(onto), &before) {
             Ok(files) => Ok(Merged::Clean(repo.add(files, vec![onto.into()]))),
             Err(clashes) => Ok(Merged::Conflict(clashes)),

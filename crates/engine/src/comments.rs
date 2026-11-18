@@ -154,7 +154,7 @@ impl Engine {
             Some(_) => self.ports.captures.elements(key, kind, target, theme)?,
             None => None,
         };
-        let map = map.map(|m| elements(&m)).unwrap_or_default();
+        let map = map.map_or_default(|m| elements(&m));
         let anchor = match at {
             At::Point { x, y } => element_at(&map, *x, *y).map_or_else(
                 || Anchor {
