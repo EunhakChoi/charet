@@ -141,8 +141,8 @@ move between pages) and where its components come from: follow the imports of th
 may lead to a folder in the app or to a workspace package. Then, in `project.tsx` (`project.md` has the syntax):
 
 1. **Screens.** Pick the 3–5 pages people use most, from the route list and the navigation, not
-   every route. For each page: its usual state with realistic sample data, an empty state and a load
-   error. States reached by interaction (a dialog open, a tab picked, a filter on) are screens of
+   every route. For each page: its usual state with realistic sample data and, only where the page
+   really has them (it loads a list, it can fail), an empty, a loading and an error state. States reached by interaction (a dialog open, a tab picked, a filter on) are screens of
    their own, with `setup` or `query`. Add `connections` for the moves between them.
 2. **Flows.** Write 1–2 flows for the main tasks a user does, in the order the app really takes
    them through, read from the routes and the buttons. A step the app does not have yet is a planned
