@@ -138,7 +138,9 @@ charet ls --stale                   # screens whose capture is older than the co
 `charet import <app>` copies the app into charet; then you add `.charet/` (charet-only dependencies,
 vite config, frame, project, mocks) in the checkout, push (with `--merge`) and check. The app's own `package.json`
 and lockfile stay exactly as in its repository. Follow `references/import.md` step by step — it
-covers getting the SDK, the files to write and the usual failures.
+covers getting the SDK, the files to write and the usual failures. Do not stop at the first screen
+that renders: step 4 there picks the main screens and their states, the flows and the components,
+so the team gets something worth reviewing.
 
 ## Workflow 4b · Show components (the Components view)
 

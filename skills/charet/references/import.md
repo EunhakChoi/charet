@@ -133,6 +133,29 @@ charet url <id>     # links for the team
 straight to push and `check`, which reports more. `check` and `capture` run on what was pushed (and merged, for `capture`), so push before
 checking: an unpushed fix is invisible to them. Later fixes: `charet push -m "…" --merge` again.
 
+## 4. Fill in screens, flows and components
+
+One rendered screen proves the setup; the team needs enough to review the product. Read the app
+before writing: its router (the routes), its navigation (sidebar, header links, the buttons that
+move between pages) and where its components come from: follow the imports of those pages, which
+may lead to a folder in the app or to a workspace package. Then, in `project.tsx` (`project.md` has the syntax):
+
+1. **Screens.** Pick the 3–5 pages people use most, from the route list and the navigation, not
+   every route. For each page: its usual state with realistic sample data and, only where the page
+   really has them (it loads a list, it can fail), an empty, a loading and an error state. States reached by interaction (a dialog open, a tab picked, a filter on) are screens of
+   their own, with `setup` or `query`. Add `connections` for the moves between them.
+2. **Flows.** Write 1–2 flows for the main tasks a user does, in the order the app really takes
+   them through, read from the routes and the buttons. A step the app does not have yet is a planned
+   step; do not invent screens for it.
+3. **Components.** Shared UI parts (Button, Input, Badge…, wherever the app keeps them) go in the Base
+   group with `variants()` over the props that change their look. Components that need data or a
+   provider (a list row, a page header) go in `group: "Feature"` with a representative sample as the
+   default, and are imported lazily when they reach the API client. (SKILL.md Workflow 4b)
+
+Push, `charet check` and fix every error, then capture and open the pictures yourself: a screen can
+pass `check` and still be empty, clipped or in the wrong state (Workflow 3). Then give the user the
+`charet url` links and say which pages, states and components you left out.
+
 ## Common problems
 
 | Symptom | Cause · fix |
